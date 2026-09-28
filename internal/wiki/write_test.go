@@ -60,7 +60,7 @@ func TestAWriteOverAChangedPageIsAConflict(t *testing.T) {
 	// Another writer, such as an editor or an agent, saves first.
 	write(t, pageFile(root, "b"), "# B, edited elsewhere\n")
 
-	err := w.commit([]fileWrite{{Page: "a", Base: hashA, Data: []byte("# A, mine\n")}, {Page: "b", Base: hashB, Data: []byte("# B, mine\n")}})
+	_, err := w.commit([]fileWrite{{Page: "a", Base: hashA, Data: []byte("# A, mine\n")}, {Page: "b", Base: hashB, Data: []byte("# B, mine\n")}})
 	var conflict *ErrConflict
 	if !errors.As(err, &conflict) || conflict.Page != "b" || string(conflict.Current) != "# B, edited elsewhere\n" {
 		t.Fatalf("commit = %v, want a conflict on b carrying its current content", err)
@@ -80,20 +80,20 @@ func TestAWriteOverAChangedPageIsAConflict(t *testing.T) {
 	}
 	defer other.Close()
 	_, base, _ := other.Read("a")
-	if err := w.Write("a", []byte("# A, first\n"), base); err != nil {
+	if _, err := w.Write("a", []byte("# A, first\n"), base); err != nil {
 		t.Fatal(err)
 	}
-	if err := other.Write("a", []byte("# A, second\n"), base); !errors.As(err, &conflict) {
+	if _, err := other.Write("a", []byte("# A, second\n"), base); !errors.As(err, &conflict) {
 		t.Fatalf("second write = %v, want a conflict", err)
 	}
-	if err := w.commit([]fileWrite{{Page: "a", Data: []byte("x")}}); !errors.Is(err, ErrExists) {
+	if _, err := w.commit([]fileWrite{{Page: "a", Data: []byte("x")}}); !errors.Is(err, ErrExists) {
 		t.Fatalf("creating over a page = %v, want ErrExists", err)
 	}
 }
 
 func TestCreateSetBodyAndTags(t *testing.T) {
 	w, root := emptyWiki(t)
-	info, err := w.Create(NewPage{Title: "Fix the lexer!", Dir: "tasks", Task: true, Tags: []string{"Bug", "parser"}, Body: "Body text."})
+	info, _, err := w.Create(NewPage{Title: "Fix the lexer!", Dir: "tasks", Task: true, Tags: []string{"Bug", "parser"}, Body: "Body text."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,14 +101,14 @@ func TestCreateSetBodyAndTags(t *testing.T) {
 	if info.Path != "tasks/fix-the-lexer" || source(t, root, info.Path) != want {
 		t.Fatalf("created %s:\n%q\nwant:\n%q", info.Path, source(t, root, info.Path), want)
 	}
-	if again, _ := w.Create(NewPage{Title: "Fix the lexer", Dir: "tasks"}); again.Path != "tasks/fix-the-lexer-2" {
+	if again, _, _ := w.Create(NewPage{Title: "Fix the lexer", Dir: "tasks"}); again.Path != "tasks/fix-the-lexer-2" {
 		t.Fatalf("second page got %q, want a suffix", again.Path)
 	}
-	if _, err := w.Create(NewPage{Title: "x", Dir: "../out"}); err == nil {
+	if _, _, err := w.Create(NewPage{Title: "x", Dir: "../out"}); err == nil {
 		t.Fatal("a page outside the wiki was created")
 	}
 
-	if err := w.SetBody(info.Path, "# Fix the lexer!\n\nNew body."); err != nil {
+	if _, err := w.SetBody(info.Path, "# Fix the lexer!\n\nNew body."); err != nil {
 		t.Fatal(err)
 	}
 	if got := source(t, root, info.Path); !strings.HasPrefix(got, "---\ntype: task") || !strings.HasSuffix(got, "New body.\n") {
@@ -119,13 +119,13 @@ func TestCreateSetBodyAndTags(t *testing.T) {
 	if _, err := w.Refresh(); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.Tag("notes", []string{"#Two", "one"}, nil); err != nil {
+	if _, err := w.Tag("notes", []string{"#Two", "one"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := source(t, root, "notes"); got != "---\n# kept comment\ntitle: Notes\ntags:\n  - one\n  - two\n---\n\nText.\n" {
 		t.Fatalf("after tagging:\n%q", got)
 	}
-	if err := w.Tag("notes", nil, []string{"ONE", "two"}); err != nil {
+	if _, err := w.Tag("notes", nil, []string{"ONE", "two"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := source(t, root, "notes"); got != "---\n# kept comment\ntitle: Notes\n---\n\nText.\n" {
@@ -135,7 +135,7 @@ func TestCreateSetBodyAndTags(t *testing.T) {
 	if _, err := w.Refresh(); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.Tag("bare", []string{"new"}, nil); err != nil {
+	if _, err := w.Tag("bare", []string{"new"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := source(t, root, "bare"); got != "---\ntags: [new]\n---\n\n# Bare\n" {
@@ -157,13 +157,13 @@ func TestTasksChangeStatusAndPromote(t *testing.T) {
 	if err != nil || item.Page != "plan" || item.Line != 3 {
 		t.Fatalf("FindTask(grammar) = %+v, %v", item, err)
 	}
-	if err := w.SetTaskStatus(item, "done"); err != nil {
+	if _, err := w.SetTaskStatus(item, "done"); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(source(t, root, "plan"), "- [x] write the grammar") {
 		t.Fatalf("item not ticked:\n%s", source(t, root, "plan"))
 	}
-	if err := w.SetTaskStatus(item, "doing"); err == nil {
+	if _, err := w.SetTaskStatus(item, "doing"); err == nil {
 		t.Fatal("a checklist item took doing")
 	}
 	if byLine, err := w.FindTask("plan:4"); err != nil || byLine.Text != "sketch the lexer" {
@@ -177,7 +177,7 @@ func TestTasksChangeStatusAndPromote(t *testing.T) {
 	if err != nil || page.Line != 0 {
 		t.Fatalf("FindTask(ship) = %+v, %v", page, err)
 	}
-	if err := w.SetTaskStatus(page, "doing"); err != nil {
+	if _, err := w.SetTaskStatus(page, "doing"); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(source(t, root, "tasks/ship"), "status: doing") {
@@ -185,7 +185,7 @@ func TestTasksChangeStatusAndPromote(t *testing.T) {
 	}
 
 	item, _ = w.FindTask("write the grammar")
-	created, err := w.Promote(item, "tasks")
+	created, _, err := w.Promote(item, "tasks")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,10 +216,10 @@ func TestTaskEditsRefuseAPageChangedSinceIndexing(t *testing.T) {
 	write(t, pageFile(root, "plan"), changed)
 
 	var conflict *ErrConflict
-	if err := w.SetTaskStatus(item, "done"); !errors.As(err, &conflict) {
+	if _, err := w.SetTaskStatus(item, "done"); !errors.As(err, &conflict) {
 		t.Fatalf("SetTaskStatus = %v, want a conflict", err)
 	}
-	if _, err := w.Promote(item, "tasks"); !errors.As(err, &conflict) {
+	if _, _, err := w.Promote(item, "tasks"); !errors.As(err, &conflict) {
 		t.Fatalf("Promote = %v, want a conflict", err)
 	}
 	if got := source(t, root, "plan"); got != changed {
@@ -239,12 +239,12 @@ func TestReplaceOneSpan(t *testing.T) {
 		"aa":   "occurs 2 times", // overlapping
 		"# A!": "does not contain",
 	} {
-		if _, err := w.Replace("a", old, "x", hash); err == nil || !strings.Contains(err.Error(), want) {
+		if _, _, err := w.Replace("a", old, "x", hash); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("Replace(%q) = %v, want %q", old, err, want)
 		}
 	}
 
-	next, err := w.Replace("a", "and b\n", "and c\n", hash)
+	next, _, err := w.Replace("a", "and b\n", "and c\n", hash)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +254,7 @@ func TestReplaceOneSpan(t *testing.T) {
 
 	// The first hash is stale now; the conflict carries the current page.
 	var conflict *ErrConflict
-	if _, err := w.Replace("a", "aaa", "x", hash); !errors.As(err, &conflict) || conflict.CurrentHash != next {
+	if _, _, err := w.Replace("a", "aaa", "x", hash); !errors.As(err, &conflict) || conflict.CurrentHash != next {
 		t.Fatalf("Replace with a stale base = %v", err)
 	}
 }
@@ -262,11 +262,11 @@ func TestReplaceOneSpan(t *testing.T) {
 func TestRemoveRefusesWhileLinked(t *testing.T) {
 	w, root := emptyWiki(t)
 	put(t, w, root, map[string]string{"target": "# Target\n", "source": "See [[Target]].\n"})
-	back, err := w.Remove("target", false)
+	back, _, err := w.Remove("target", false)
 	if err == nil || len(back) != 1 {
 		t.Fatalf("Remove = %v, %v; want a refusal naming the link", back, err)
 	}
-	if _, err := w.Remove("target", true); err != nil {
+	if _, _, err := w.Remove("target", true); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(pageFile(root, "target")); !os.IsNotExist(err) {
@@ -318,7 +318,7 @@ func TestMoveRewritesLinksInTheirOwnForm(t *testing.T) {
 		t.Fatal("planning wrote the moved page")
 	}
 
-	res, err := w.Move("lexer/design-sketch", "archive/old/sketch")
+	res, _, err := w.Move("lexer/design-sketch", "archive/old/sketch")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,7 +376,7 @@ func TestMoveRefusesWhenALinkingPageChanged(t *testing.T) {
 	write(t, pageFile(root, "lexer/grammar"), "# Grammar\n\n## Rules\n\nEdited elsewhere. See [[design-sketch]].\n")
 
 	var conflict *ErrConflict
-	if err := w.commit(plan.writes); !errors.As(err, &conflict) || conflict.Page != "lexer/grammar" {
+	if _, err := w.commit(plan.writes); !errors.As(err, &conflict) || conflict.Page != "lexer/grammar" {
 		t.Fatalf("commit = %v, want a conflict on lexer/grammar", err)
 	}
 	if _, err := os.Stat(pageFile(root, "archive/sketch")); !os.IsNotExist(err) {
@@ -385,7 +385,7 @@ func TestMoveRefusesWhenALinkingPageChanged(t *testing.T) {
 	if source(t, root, "lexer/design-sketch") != before || !strings.Contains(source(t, root, "index"), "[[lexer/design-sketch]]") {
 		t.Fatal("the refused move changed a page")
 	}
-	if _, err := w.Move("lexer/design-sketch", "index"); !errors.Is(err, ErrExists) {
+	if _, _, err := w.Move("lexer/design-sketch", "index"); !errors.Is(err, ErrExists) {
 		t.Fatalf("moving onto a page = %v, want ErrExists", err)
 	}
 }
@@ -451,7 +451,7 @@ func TestOffersAndFixes(t *testing.T) {
 		if len(offers) == 0 {
 			t.Fatalf("no offer for %s", broken[0].Written())
 		}
-		if err := w.Fix(broken[0], offers[0]); err != nil {
+		if _, err := w.Fix(broken[0], offers[0]); err != nil {
 			t.Fatalf("Fix %s: %v", broken[0].Written(), err)
 		}
 	}
@@ -504,5 +504,214 @@ func TestBoundedDistanceMatchesLevenshtein(t *testing.T) {
 		if got := editDistance(a, b); got != naive(a, b) {
 			t.Fatalf("editDistance(%q, %q) = %d", a, b, got)
 		}
+	}
+}
+
+func TestCreateReportsAPathItCannotCheck(t *testing.T) {
+	w, root := emptyWiki(t)
+	write(t, filepath.Join(root, DirName, PagesDir, "notes"), "a file, not a directory\n")
+
+	// Each failed to stat with an error other than "not exist", which once
+	// looped forever looking for a free name.
+	for _, n := range []NewPage{{Title: strings.Repeat("x", 300)}, {Title: "Inside", Dir: "notes"}} {
+		if _, _, err := w.Create(n); err == nil {
+			t.Errorf("Create(%.20q in %q) succeeded", n.Title, n.Dir)
+		}
+	}
+}
+
+func TestABatchThatCannotStageEveryPageWritesNone(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	w, root := moveFixture(t)
+	locked := filepath.Join(root, DirName, PagesDir, "notes", "deep")
+	if err := os.Chmod(locked, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0o755) })
+
+	// notes/deep/other links to the page, so the move rewrites it, and its
+	// directory refuses the temporary file.
+	if _, _, err := w.Move("lexer/design-sketch", "archive/sketch"); err == nil {
+		t.Fatal("Move succeeded")
+	}
+	if _, err := os.Stat(pageFile(root, "archive/sketch")); !os.IsNotExist(err) {
+		t.Fatalf("the moved page was written: %v", err)
+	}
+	if got := source(t, root, "index"); !strings.Contains(got, "[[lexer/design-sketch]]") {
+		t.Fatalf("index was rewritten:\n%s", got)
+	}
+	if _, err := w.Page("lexer/design-sketch"); err != nil {
+		t.Fatalf("the page left the cache: %v", err)
+	}
+}
+
+func TestAnUnreadablePageDoesNotFailWritesOrOpen(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads any file")
+	}
+	w, root := emptyWiki(t)
+	put(t, w, root, map[string]string{"a": "# A\n", "locked": "# Locked\n"})
+	locked := pageFile(root, "locked")
+	write(t, locked, "# Locked, edited\n")
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0o644) })
+
+	_, hash, _ := w.Read("a")
+	warn, err := w.commit([]fileWrite{{Page: "a", Base: hash, Data: []byte("# A, mine\n")}})
+	if err != nil || len(warn.Skipped) != 1 || warn.Skipped[0] != (Skip{Path: "locked.md", Reason: "permission denied"}) {
+		t.Fatalf("commit = %+v, %v", warn, err)
+	}
+	if p, err := w.Page("a"); err != nil || p.Title != "A, mine" {
+		t.Fatalf("Page(a) = %+v, %v: the cache missed the write", p, err)
+	}
+	other, err := Open(w.Project)
+	if err != nil {
+		t.Fatalf("Open = %v", err)
+	}
+	other.Close()
+
+	// Readable again: the next refresh indexes it.
+	if err := os.Chmod(locked, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if ch, err := w.Refresh(); err != nil || strings.Join(ch.Added, ",") != "locked" {
+		t.Fatalf("Refresh = %+v, %v", ch, err)
+	}
+	if s, _ := w.Skipped(); len(s) != 0 {
+		t.Fatalf("Skipped = %+v", s)
+	}
+}
+
+func TestSymlinksAreRefusedAndReported(t *testing.T) {
+	w, root := emptyWiki(t)
+	outside := t.TempDir()
+	write(t, filepath.Join(outside, "secret.md"), "# Secret\n")
+	pages := filepath.Join(root, DirName, PagesDir)
+	put(t, w, root, map[string]string{"a": "# A\n", "notes/b": "# B\n"})
+	for link, target := range map[string]string{
+		"secret.md": filepath.Join(outside, "secret.md"), // out of the wiki
+		"ext":       outside,
+		"alias.md":  "a.md", // inside it
+		"inner":     "notes",
+		"other.txt": "a.md", // neither a page nor a directory: not reported
+	} {
+		if err := os.Symlink(target, filepath.Join(pages, link)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := w.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+
+	skipped, err := w.Skipped()
+	var paths []string
+	for _, s := range skipped {
+		paths = append(paths, s.Path)
+		if s.Reason != ErrSymlink.Error() {
+			t.Errorf("%s: reason %q", s.Path, s.Reason)
+		}
+	}
+	if err != nil || strings.Join(paths, " ") != "alias.md ext inner secret.md" {
+		t.Fatalf("Skipped = %v, %v", skipped, err)
+	}
+	for _, page := range []string{"secret", "alias", "inner/b"} {
+		if _, _, err := w.Read(page); !errors.Is(err, ErrSymlink) {
+			t.Errorf("Read(%s) = %v", page, err)
+		}
+		if _, err := w.Page(page); err == nil {
+			t.Errorf("%s was indexed", page)
+		}
+	}
+	if _, _, err := w.Create(NewPage{Title: "Planted", Dir: "ext"}); !errors.Is(err, ErrSymlink) {
+		t.Errorf("Create through a symlinked directory = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "planted.md")); !os.IsNotExist(err) {
+		t.Errorf("a file appeared outside the wiki: %v", err)
+	}
+	_, hash, _ := w.Read("a")
+	warn, err := w.Write("a", []byte("# A, mine\n"), hash)
+	if err != nil || len(warn.Skipped) != 4 || !strings.Contains(warn.String(), "4 files are not in the wiki") {
+		t.Fatalf("Write = %+v (%s), %v", warn, warn, err)
+	}
+	if fi, err := os.Lstat(filepath.Join(pages, "alias.md")); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("a write replaced a symlink")
+	}
+}
+
+func TestAnUnreadableDirectoryIsReportedAndRetried(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads any directory")
+	}
+	w, root := emptyWiki(t)
+	put(t, w, root, map[string]string{"a": "# A\n", "locked/b": "# B\n"})
+	locked := filepath.Join(root, DirName, PagesDir, "locked")
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0o755) })
+
+	ch, err := w.Refresh()
+	if err != nil || strings.Join(ch.Removed, ",") != "locked/b" {
+		t.Fatalf("Refresh = %+v, %v", ch, err)
+	}
+	if s, _ := w.Skipped(); len(s) != 1 || s[0].Path != "locked" || s[0].Reason != "permission denied" {
+		t.Fatalf("Skipped = %+v", s)
+	}
+	if err := os.Chmod(locked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if ch, err := w.Refresh(); err != nil || strings.Join(ch.Added, ",") != "locked/b" {
+		t.Fatalf("Refresh after chmod = %+v, %v", ch, err)
+	}
+	if s, _ := w.Skipped(); len(s) != 0 {
+		t.Fatalf("Skipped = %+v", s)
+	}
+}
+
+func TestAMoveThatStopsPartWayNamesWhatLanded(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	w, root := emptyWiki(t)
+	put(t, w, root, map[string]string{"locked/a": "# A\n"})
+	locked := filepath.Join(root, DirName, PagesDir, "locked")
+	// The page can be read and copied out, but not removed.
+	if err := os.Chmod(locked, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0o755) })
+
+	_, _, err := w.Move("locked/a", "open/a")
+	var partial *ErrPartial
+	if !errors.As(err, &partial) || strings.Join(partial.Done, ",") != "open/a" || strings.Join(partial.NotDone, ",") != "locked/a" {
+		t.Fatalf("Move = %v", err)
+	}
+	for _, page := range []string{"locked/a", "open/a"} {
+		if _, err := w.Page(page); err != nil {
+			t.Errorf("%s is not in the cache: %v", page, err)
+		}
+	}
+}
+
+func TestAWriteThatLandsWithAStaleCacheSucceedsWithAWarning(t *testing.T) {
+	w, root := emptyWiki(t)
+	put(t, w, root, map[string]string{"a": "# A\n"})
+	// Any refresh that finds a change now fails.
+	if _, err := w.db.Exec(`DROP TABLE skipped`); err != nil {
+		t.Fatal(err)
+	}
+	info, warn, err := w.Create(NewPage{Title: "New page"})
+	if err != nil || info.Path != "new-page" || info.Title != "New page" || warn.Stale == nil {
+		t.Fatalf("Create = %+v, %+v, %v", info, warn, err)
+	}
+	if !strings.Contains(warn.String(), "cache --rebuild") {
+		t.Fatalf("warning: %s", warn)
+	}
+	if got := source(t, root, "new-page"); got != "# New page\n" {
+		t.Fatalf("new-page = %q", got)
 	}
 }

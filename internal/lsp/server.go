@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"sort"
 	"strings"
@@ -48,6 +49,10 @@ type Server struct {
 	drift      map[[2]string]wiki.Drifted
 	moved      map[[2]string]wiki.Offer
 	driftStamp string
+
+	// skipped holds why each file the wiki leaves out is left out, by its
+	// path in the pages directory.
+	skipped map[string]string
 
 	docs map[string]*document // by URI
 
@@ -290,6 +295,7 @@ func (s *Server) initialize(raw json.RawMessage) (any, error) {
 	}
 	s.w, s.snap, s.initialized = w, snap, true
 	s.checkDrift(true)
+	s.checkSkipped()
 
 	encoding := "utf-16"
 	for _, e := range p.Capabilities.General.PositionEncodings {
@@ -418,7 +424,8 @@ func (s *Server) poll() {
 		}
 		s.snap = snap
 	}
-	if !s.checkDrift(!ch.Empty()) && ch.Empty() {
+	skipped := s.checkSkipped()
+	if !s.checkDrift(!ch.Empty()) && ch.Empty() && !skipped {
 		return
 	}
 	uris := make([]string, 0, len(s.docs))
@@ -429,6 +436,23 @@ func (s *Server) poll() {
 	for _, uri := range uris {
 		s.publish(s.docs[uri])
 	}
+}
+
+// checkSkipped reloads the files the wiki leaves out, and reports whether
+// they changed.
+func (s *Server) checkSkipped() bool {
+	list, err := s.w.Skipped()
+	if err != nil {
+		s.logf("skipped: %v", err)
+		return false
+	}
+	skipped := map[string]string{}
+	for _, sk := range list {
+		skipped[sk.Path] = sk.Reason
+	}
+	changed := !maps.Equal(skipped, s.skipped)
+	s.skipped = skipped
+	return changed
 }
 
 // checkDrift recomputes drifted line anchors when forced or when the stamp
@@ -544,6 +568,15 @@ func problem(l wiki.Link) string {
 
 func (s *Server) publish(d *document) {
 	diags := []map[string]any{}
+	if reason, ok := s.skipped[d.page+".md"]; ok && d.page != "" {
+		diags = append(diags, map[string]any{
+			"range":    Range{},
+			"severity": 2,
+			"source":   "gwiki",
+			"code":     "skipped",
+			"message":  "not in the wiki: " + reason,
+		})
+	}
 	for _, l := range s.links(d) {
 		if dr, ok := s.driftOf(d.page, l); ok {
 			msg := fmt.Sprintf("the lines at %s changed since the link was committed in %.7s", l.Anchor, dr.Since)

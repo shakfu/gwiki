@@ -19,6 +19,7 @@ type overview struct {
 	pages    int
 	recent   []wiki.Change
 	broken   int
+	skipped  []wiki.Skip
 	orphans  []wiki.PageInfo
 	deadEnds []wiki.PageInfo
 	dirs     []wiki.Count
@@ -48,6 +49,8 @@ func (m *WikiModel) loadHome() {
 	o.recent, err = m.w.Recent(homeRecent)
 	try(err)
 	o.broken, err = m.w.BrokenCount()
+	try(err)
+	o.skipped, err = m.w.Skipped()
 	try(err)
 	o.orphans, err = m.w.Orphans()
 	try(err)
@@ -228,12 +231,24 @@ func (m *WikiModel) statsColumns() [2][]homeRow {
 		}
 		return []cell{{{"✓ ", styleOK}, {label, stylePlain}}, text("0", styleOK)}
 	}
-	health.rows = [][]cell{count("broken links", o.broken), count("orphan pages", len(o.orphans)), count("dead ends", len(o.deadEnds))}
-	left = append(left, rowsOf(health, lw, []func(){
-		func() { m.showList(screenBroken) },
+	health.rows = [][]cell{count("broken links", o.broken)}
+	healthActions := []func(){func() { m.showList(screenBroken) }}
+	// Shown only while there are some: most wikis never have one.
+	if len(o.skipped) > 0 {
+		health.rows = append(health.rows, count("files not in the wiki", len(o.skipped)))
+		healthActions = append(healthActions, func() {
+			var list []string
+			for _, s := range o.skipped {
+				list = append(list, s.Path+" ("+s.Reason+")")
+			}
+			m.status, m.statusErr = "not in the wiki: "+strings.Join(list, ", "), true
+		})
+	}
+	health.rows = append(health.rows, count("orphan pages", len(o.orphans)), count("dead ends", len(o.deadEnds)))
+	left = append(left, rowsOf(health, lw, append(healthActions,
 		listPages("orphan pages: nothing links to them", o.orphans),
 		listPages("dead ends: they link to no page", o.deadEnds),
-	})...)
+	))...)
 
 	if len(o.hubs) > 0 {
 		header(&left, "Most linked", "")

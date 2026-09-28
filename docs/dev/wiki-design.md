@@ -345,9 +345,12 @@ goes through one function:
 1. The caller passes the content hash it last read (the base).
 2. The page is re-read. If its hash differs from the base, the write stops with
    a conflict and the current content; nothing is written.
-3. Otherwise the new content goes to a temporary file, which is renamed over
-   the page.
-4. The page is re-indexed in the same step.
+3. Otherwise every page in the batch goes to a synced temporary file, and only
+   then are they renamed: new pages first, removals last. No path with a
+   symlink in it is read or written.
+4. The cache is refreshed. The result is tiered by what landed: nothing (an
+   error), part of the batch (`ErrPartial`, naming both parts), or all of it
+   (success, with `Warnings` when the refresh failed or files are skipped).
 
 This is gopherwiki's optimistic lock (`SavePage` with a base revision), keyed
 on content hash instead of a commit, since gnotes does not commit.

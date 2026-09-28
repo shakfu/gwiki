@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -38,6 +39,9 @@ type Options struct {
 	// PollInterval is how often the pages are checked for outside changes.
 	// Zero selects one second.
 	PollInterval time.Duration
+
+	// Log receives a refresh that fails, and its recovery. Nil discards them.
+	Log io.Writer
 }
 
 // Server serves one wiki.
@@ -59,6 +63,10 @@ type Server struct {
 	pollInterval time.Duration
 	mux          *http.ServeMux
 	anyHost      bool
+
+	log io.Writer
+	// stale is why the last refresh failed, or empty. Guarded by mu.
+	stale string
 }
 
 // New builds a server over an open wiki.
@@ -75,7 +83,11 @@ func New(w *wiki.Wiki, opts Options) (*Server, error) {
 	if interval == 0 {
 		interval = time.Second
 	}
-	s := &Server{w: w, token: token, watchers: map[chan uint64]struct{}{}, pollInterval: interval}
+	log := opts.Log
+	if log == nil {
+		log = io.Discard
+	}
+	s := &Server{w: w, token: token, watchers: map[chan uint64]struct{}{}, pollInterval: interval, log: log}
 	s.version.Store(1)
 	s.routes()
 	return s, nil
@@ -222,12 +234,26 @@ func (s *Server) watch(stop <-chan struct{}) {
 	}
 }
 
-// checkDisk refreshes the cache and wakes the browsers when pages changed.
+// checkDisk refreshes the cache and wakes the browsers when pages changed. A
+// failed refresh is logged and shown in the browsers, once when it starts and
+// once when it clears, not on every poll.
 func (s *Server) checkDisk() {
 	s.mu.Lock()
 	ch, err := s.w.Refresh()
+	was := s.stale
+	s.stale = ""
+	if err != nil {
+		s.stale = err.Error()
+	}
+	now := s.stale
 	s.mu.Unlock()
-	if err == nil && !ch.Empty() {
+	switch {
+	case now != was && now != "":
+		fmt.Fprintf(s.log, "gwiki: refresh failed, pages shown as last indexed: %s\n", now)
+	case now != was:
+		fmt.Fprintf(s.log, "gwiki: refresh works again\n")
+	}
+	if now != was || err == nil && !ch.Empty() {
 		s.bump()
 	}
 }

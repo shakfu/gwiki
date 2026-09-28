@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -35,6 +36,30 @@ type fileStat struct {
 	size, mtime int64
 }
 
+// Skip is a file in the pages directory that the wiki leaves out.
+type Skip struct {
+	Path   string `json:"path"` // relative to the pages directory, slash-separated
+	Reason string `json:"reason"`
+
+	// retry marks an error, such as a page that could not be read, which the
+	// next refresh tries again. A symlink stays skipped until it changes.
+	retry bool
+}
+
+func skipErr(rel string, err error) Skip {
+	if pe, ok := err.(*os.PathError); ok {
+		err = pe.Err
+	}
+	return Skip{Path: rel, Reason: err.Error(), retry: true}
+}
+
+func sameSkips(a, b []Skip) bool {
+	return slices.EqualFunc(a, b, func(x, y Skip) bool { return x.Path == y.Path && x.Reason == y.Reason })
+}
+
+// Skipped lists the files the last refresh left out.
+func (w *Wiki) Skipped() ([]Skip, error) { return skippedIn(w.db) }
+
 type parsed struct {
 	fileStat
 	hash string
@@ -49,13 +74,24 @@ type parsed struct {
 // read. A fingerprint of every page's name, size and time answers the common
 // case, nothing changed, without reading the file table. A write transaction is
 // taken only when something changed.
+//
+// A file that cannot be read, and a symlink, are left out as if absent and
+// listed in Skipped. While a read failed, the stored fingerprint is marked so
+// that it never matches, and every refresh tries again.
 func (w *Wiki) Refresh() (Changes, error) {
 	var ch Changes
-	found, err := w.scan()
+	root, err := os.OpenRoot(w.PagesPath())
+	if os.IsNotExist(err) {
+		return ch, ErrNotFound
+	} else if err != nil {
+		return ch, err
+	}
+	defer root.Close()
+	found, skipped, err := w.scan(root)
 	if err != nil {
 		return ch, err
 	}
-	print := fingerprint(found)
+	print := fingerprint(found, skipped)
 	if stored, err := storedFingerprint(w.db); err != nil || stored == print {
 		return ch, err
 	}
@@ -68,7 +104,8 @@ func (w *Wiki) Refresh() (Changes, error) {
 		return ch, fmt.Errorf("write %s: %w", w.Cache(), err)
 	}
 	defer tx.Rollback()
-	if stored, err := storedFingerprint(tx); err != nil || stored == print {
+	stored, err := storedFingerprint(tx)
+	if err != nil || stored == print {
 		return ch, err
 	}
 
@@ -78,14 +115,31 @@ func (w *Wiki) Refresh() (Changes, error) {
 	}
 	var todo []fileStat
 	for _, f := range found {
+		if k, ok := known[f.rel]; !ok || k.size != f.size || k.mtime != f.mtime {
+			todo = append(todo, f)
+		}
+	}
+	unread := map[string]bool{}
+	pages := slices.DeleteFunc(parseAll(root, todo), func(p parsed) bool {
+		if p.err != nil {
+			unread[p.rel] = true
+			skipped = append(skipped, skipErr(p.rel, p.err))
+		}
+		return p.err != nil
+	})
+	slices.SortFunc(skipped, func(a, b Skip) int { return strings.Compare(a.Path, b.Path) })
+	found = slices.DeleteFunc(found, func(f fileStat) bool { return unread[f.rel] })
+	if slices.ContainsFunc(skipped, func(s Skip) bool { return s.retry }) {
+		print = "retry " + print
+	}
+
+	for _, f := range found {
 		k, ok := known[f.rel]
 		switch {
 		case !ok:
 			ch.Added = append(ch.Added, pageID(f.rel))
-			todo = append(todo, f)
 		case k.size != f.size || k.mtime != f.mtime:
 			ch.Modified = append(ch.Modified, pageID(f.rel))
-			todo = append(todo, f)
 		}
 		delete(known, f.rel)
 	}
@@ -95,12 +149,12 @@ func (w *Wiki) Refresh() (Changes, error) {
 	sort.Strings(ch.Added)
 	sort.Strings(ch.Modified)
 	sort.Strings(ch.Removed)
-
-	pages := w.parseAll(todo)
-	for _, p := range pages {
-		if p.err != nil {
-			return ch, p.err
-		}
+	was, err := skippedIn(tx)
+	if err != nil {
+		return ch, err
+	}
+	if ch.Empty() && stored == print && sameSkips(was, skipped) {
+		return ch, nil // the same files still fail to read
 	}
 
 	wr, err := w.newWriter(tx)
@@ -166,6 +220,14 @@ func (w *Wiki) Refresh() (Changes, error) {
 	if err := wr.resolve(); err != nil {
 		return ch, err
 	}
+	if _, err := tx.Exec(`DELETE FROM skipped`); err != nil {
+		return ch, err
+	}
+	for _, s := range skipped {
+		if _, err := tx.Exec(`INSERT INTO skipped (path, reason) VALUES (?, ?)`, s.Path, s.Reason); err != nil {
+			return ch, err
+		}
+	}
 	if _, err := tx.Exec(`INSERT OR REPLACE INTO meta (k, v) VALUES ('fingerprint', ?)`, print); err != nil {
 		return ch, err
 	}
@@ -175,9 +237,16 @@ func (w *Wiki) Refresh() (Changes, error) {
 	return ch, nil
 }
 
-// fingerprint summarises every page's name, size and modification time. The
-// per-file hashes are summed, so the order of the scan does not matter.
-func fingerprint(files []fileStat) string {
+// fingerprint summarises every page's name, size and modification time, and
+// the names of the symlinks. The per-file hashes are summed, so the order of
+// the scan does not matter.
+func fingerprint(files []fileStat, skipped []Skip) string {
+	files = slices.Clone(files)
+	for _, s := range skipped {
+		if !s.retry {
+			files = append(files, fileStat{rel: s.Path, size: -1})
+		}
+	}
 	var sum uint64
 	var buf [16]byte
 	for _, f := range files {
@@ -193,22 +262,24 @@ func fingerprint(files []fileStat) string {
 	return strconv.Itoa(len(files)) + ":" + strconv.FormatUint(sum, 16)
 }
 
-// scan lists every page with its size and modification time. Directories are
-// listed in one goroutine and files are stat'ed on a pool, which measured three
-// times faster than filepath.WalkDir on 5,000 pages. Hidden entries are skipped.
-func (w *Wiki) scan() ([]fileStat, error) {
-	root := w.PagesPath()
+// scan lists every page with its size and modification time, and the files it
+// leaves out. Directories are listed in one goroutine and files are stat'ed on
+// a pool, which measured three times faster than filepath.WalkDir on 5,000
+// pages. Hidden entries are skipped without a report.
+func (w *Wiki) scan(root *os.Root) ([]fileStat, []Skip, error) {
 	var rels []string
+	var skipped []Skip
 	dirs := []string{""}
 	for len(dirs) > 0 {
 		dir := dirs[len(dirs)-1]
 		dirs = dirs[:len(dirs)-1]
-		entries, err := os.ReadDir(filepath.Join(root, filepath.FromSlash(dir)))
+		entries, err := readDir(root, dir)
 		if err != nil {
-			if dir == "" && os.IsNotExist(err) {
-				return nil, ErrNotFound
+			if dir == "" {
+				return nil, nil, err
 			}
-			return nil, err
+			skipped = append(skipped, skipErr(dir, err))
+			continue
 		}
 		for _, e := range entries {
 			name := e.Name()
@@ -217,6 +288,12 @@ func (w *Wiki) scan() ([]fileStat, error) {
 			}
 			rel := path.Join(dir, name)
 			switch {
+			case e.Type()&os.ModeSymlink != 0:
+				// Reported when it would have been a page or a directory.
+				info, err := os.Stat(filepath.Join(w.PagesPath(), filepath.FromSlash(rel)))
+				if strings.HasSuffix(name, ".md") || err == nil && info.IsDir() {
+					skipped = append(skipped, Skip{Path: rel, Reason: ErrSymlink.Error()})
+				}
 			case e.IsDir():
 				dirs = append(dirs, rel)
 			case strings.HasSuffix(name, ".md"):
@@ -226,26 +303,53 @@ func (w *Wiki) scan() ([]fileStat, error) {
 	}
 
 	out := make([]fileStat, len(rels))
-	ok := make([]bool, len(rels))
+	skips := make([]Skip, len(rels))
 	parallel(len(rels), func(i int) {
-		info, err := os.Stat(filepath.Join(root, filepath.FromSlash(rels[i])))
-		if err != nil || !info.Mode().IsRegular() {
-			return
+		info, err := root.Lstat(filepath.FromSlash(rels[i]))
+		switch {
+		case os.IsNotExist(err): // removed since it was listed
+		case err != nil:
+			skips[i] = skipErr(rels[i], err)
+		case !info.Mode().IsRegular():
+			skips[i] = Skip{Path: rels[i], Reason: "not a regular file"}
+		default:
+			out[i] = fileStat{rel: rels[i], size: info.Size(), mtime: info.ModTime().UnixNano()}
 		}
-		out[i], ok[i] = fileStat{rel: rels[i], size: info.Size(), mtime: info.ModTime().UnixNano()}, true
 	})
 	kept := out[:0]
 	for i := range out {
-		if ok[i] {
+		if out[i].rel != "" {
 			kept = append(kept, out[i])
 		}
+		if skips[i].Path != "" {
+			skipped = append(skipped, skips[i])
+		}
 	}
-	return kept, nil
+	return kept, skipped, nil
 }
 
 type knownFile struct {
 	size, mtime int64
 	hash        string
+}
+
+func skippedIn(q interface {
+	Query(string, ...any) (*sql.Rows, error)
+}) ([]Skip, error) {
+	rows, err := q.Query(`SELECT path, reason FROM skipped ORDER BY path`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Skip{}
+	for rows.Next() {
+		var s Skip
+		if err := rows.Scan(&s.Path, &s.Reason); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
 }
 
 func storedFingerprint(q interface {
@@ -276,11 +380,20 @@ func knownFiles(tx *sql.Tx) (map[string]knownFile, error) {
 	return out, rows.Err()
 }
 
-func (w *Wiki) parseAll(files []fileStat) []parsed {
+func readDir(root *os.Root, dir string) ([]os.DirEntry, error) {
+	f, err := root.Open(filepath.FromSlash(path.Join(".", dir)))
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return f.ReadDir(-1)
+}
+
+func parseAll(root *os.Root, files []fileStat) []parsed {
 	out := make([]parsed, len(files))
 	parallel(len(files), func(i int) {
 		p := parsed{fileStat: files[i]}
-		p.src, p.err = os.ReadFile(filepath.Join(w.PagesPath(), filepath.FromSlash(files[i].rel)))
+		p.src, p.err = root.ReadFile(filepath.FromSlash(files[i].rel))
 		if p.err == nil {
 			sum := sha256.Sum256(p.src)
 			p.hash = hex.EncodeToString(sum[:])

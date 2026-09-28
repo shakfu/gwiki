@@ -87,7 +87,7 @@ func TestMoveReadmeKeepsDirectoryLinks(t *testing.T) {
 		"a":                   "[[architecture]]\n",
 		"b":                   "[section](architecture/)\n",
 	})
-	if _, err := w.Move("architecture/README", "design/README"); err != nil {
+	if _, _, err := w.Move("architecture/README", "design/README"); err != nil {
 		t.Fatal(err)
 	}
 	if got := source(t, root, "a"); !strings.Contains(got, "[[design|architecture]]") {

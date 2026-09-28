@@ -14,7 +14,7 @@ Pages are plain files, so any editor works. gwiki adds:
 
 - a command line for all of the above.
 
-All of it is one executable. Every write checks that the page has not changed since it was read, and refuses rather than overwrite.
+All of it is one executable. A write of a page's whole text, from the editor, the browser or an agent, checks that the page has not changed since it was read, and refuses rather than overwrite. A command that changes part of a page, such as `edit -m`, a tag, a task's status or a link repair, applies it to the page as it is when the command runs.
 
 ![The gwiki overview on the latest tab: pages listed by title, path and when they changed](https://raw.githubusercontent.com/shakfu/gwiki/main/docs/media/gwiki-latest.png)
 
@@ -183,7 +183,7 @@ gwiki ls lexer                              # pages under a directory
 gwiki show "design sketch"                  # a page, its links and backlinks
 gwiki search tokeniz                        # ranked; the last word matches as a prefix
 gwiki links index    gwiki backlinks grammar
-gwiki check                                 # broken links; exit status 1 while any remain
+gwiki check                                 # broken links and skipped files; exit status 1 while any remain
 gwiki check --fix                           # choose a repair for each
 gwiki check --strict                        # also exit 1 when line anchors drifted
 gwiki orphans
@@ -205,6 +205,8 @@ gwiki mcp                                   # the agent server, started by a cli
 ```
 
 Read commands take `--json`. [The design](docs/dev/wiki-design.md) covers the cache, link resolution and writes in detail.
+
+gwiki follows no symlinks in `.gwiki/wiki`, and leaves out a page it cannot read. Every command warns of these files on standard error, and `gwiki check` lists them. A write that lands but cannot update the cache succeeds with a warning; the next refresh repairs the cache.
 
 ## Development
 

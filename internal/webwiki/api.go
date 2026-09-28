@@ -49,6 +49,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		Pages    int               `json:"pages"`
 		Recent   []wiki.Change     `json:"recent"`
 		Broken   int               `json:"broken"`
+		Skipped  []wiki.Skip       `json:"skipped"`
 		Orphans  []wiki.PageInfo   `json:"orphans"`
 		DeadEnds []wiki.PageInfo   `json:"deadEnds"`
 		Tasks    []wiki.Task       `json:"tasks"`
@@ -89,6 +90,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	for _, load := range []func() error{
 		func() (err error) { out.Recent, err = s.w.Recent(12); return },
 		func() (err error) { out.Broken, err = s.w.BrokenCount(); return },
+		func() (err error) { out.Skipped, err = s.w.Skipped(); return },
 		func() (err error) { out.Orphans, err = s.w.Orphans(); return },
 		func() (err error) { out.DeadEnds, err = s.w.DeadEnds(); return },
 		func() (err error) { out.Tags, err = s.w.TagCounts(); return },
@@ -131,8 +133,9 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The name comes with the list so that a page opened directly, without
-	// the overview, still has it for the header.
-	writeJSON(w, map[string]any{"name": s.w.Config.Name, "pages": pages})
+	// the overview, still has it for the header; stale, so that every view
+	// shows a failed refresh.
+	writeJSON(w, map[string]any{"name": s.w.Config.Name, "pages": pages, "stale": s.stale})
 }
 
 // page is one page with everything the browser draws.
@@ -190,8 +193,14 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
 			out.Broken++
 		}
 	}
+	headings := map[string][]wiki.Heading{}
 	for _, l := range full.Backlinks {
-		out.Backlinks = append(out.Backlinks, s.link(l))
+		bl := s.link(l)
+		if bl.Href, err = s.backHref(l, headings); err != nil {
+			fail(w, err, http.StatusInternalServerError)
+			return
+		}
+		out.Backlinks = append(out.Backlinks, bl)
 	}
 
 	html, err := markdown.HTML(src, func(l markdown.Link) markdown.Target {
@@ -200,10 +209,13 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
 			return markdown.Target{}
 		}
 		t := markdown.Target{Href: s.href(c), Broken: c.Status != wiki.StatusOK}
-		if c.Status != wiki.StatusOK {
+		switch {
+		case c.Status != wiki.StatusOK:
 			t.Title = c.Status
-		} else if c.Kind == wiki.KindPage || c.Kind == wiki.KindHeading {
+		case c.Kind == wiki.KindPage || c.Kind == wiki.KindHeading:
 			t.Title = c.Resolved
+		case t.Href == blocked:
+			t.Title = "only http, https and mailto links open here"
 		}
 		return t
 	})
@@ -215,9 +227,31 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out)
 }
 
+// blocked is the href of an external link whose scheme the page will not open.
+const blocked = "#/"
+
+// safeExternal allows http, https, mailto and a protocol-relative URL. Other
+// schemes, such as javascript: and data:, can run script in the page.
+func safeExternal(u string) bool {
+	if strings.HasPrefix(u, "//") {
+		return true
+	}
+	scheme, _, ok := strings.Cut(u, ":")
+	if !ok {
+		return false
+	}
+	switch strings.ToLower(scheme) {
+	case "http", "https", "mailto":
+		return true
+	}
+	return false
+}
+
 // href is where the browser sends a link.
 func (s *Server) href(l wiki.Link) string {
 	switch {
+	case l.Kind == wiki.KindExternal && l.Resolved != "" && !safeExternal(l.Resolved):
+		return blocked
 	case l.Kind == wiki.KindExternal:
 		return l.Resolved
 	case l.Status != wiki.StatusOK && l.Status != wiki.StatusMissingHeading:
@@ -236,6 +270,31 @@ func (s *Server) href(l wiki.Link) string {
 		return href
 	}
 	return ""
+}
+
+// backHref leads to the page a backlink is on, at the heading above it, since
+// the rendered page has no line numbers. headings caches each page's headings.
+func (s *Server) backHref(l wiki.Link, headings map[string][]wiki.Heading) (string, error) {
+	hs, ok := headings[l.Page]
+	if !ok {
+		var err error
+		if hs, err = s.w.Headings(l.Page); err != nil {
+			return "", err
+		}
+		headings[l.Page] = hs
+	}
+	href := "#/page/" + url.PathEscape(l.Page)
+	slug := ""
+	for _, h := range hs {
+		if h.Line > l.Line {
+			break
+		}
+		slug = h.Slug
+	}
+	if slug != "" {
+		href += "#" + slug
+	}
+	return href, nil
 }
 
 func (s *Server) link(l wiki.Link) link {
@@ -298,7 +357,14 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 		fail(w, errors.New("that path is outside the repository"), http.StatusBadRequest)
 		return
 	}
-	info, err := os.Stat(abs)
+	// Read through the repository root, so a symlink cannot lead outside it.
+	root, err := os.OpenRoot(repo)
+	if err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	defer root.Close()
+	info, err := root.Stat(inside)
 	if err != nil {
 		fail(w, err, http.StatusNotFound)
 		return
@@ -308,7 +374,7 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 		fail(w, errors.New("only files under 1 MB are shown"), http.StatusBadRequest)
 		return
 	}
-	raw, err := os.ReadFile(abs)
+	raw, err := root.ReadFile(inside)
 	if err != nil {
 		fail(w, err, http.StatusInternalServerError)
 		return
@@ -347,7 +413,8 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 		text += "\n"
 	}
 	var conflict *wiki.ErrConflict
-	switch err := s.w.Write(id, []byte(text), in.Base); {
+	warn, err := s.w.Write(id, []byte(text), in.Base)
+	switch {
 	case errors.As(err, &conflict):
 		writeStatus(w, http.StatusConflict, map[string]any{
 			"error": err.Error(), "current": string(conflict.Current), "hash": conflict.CurrentHash,
@@ -358,7 +425,15 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.bump()
-	writeJSON(w, map[string]string{"hash": wiki.Hash([]byte(text))})
+	writeJSON(w, map[string]string{"hash": wiki.Hash([]byte(text)), "warning": warning(warn)})
+}
+
+// warning is what a write that landed left wrong, or empty.
+func warning(warn wiki.Warnings) string {
+	if warn.Empty() {
+		return ""
+	}
+	return warn.String()
 }
 
 func (s *Server) handleNew(w http.ResponseWriter, r *http.Request) {
@@ -374,13 +449,16 @@ func (s *Server) handleNew(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	info, err := s.w.Create(wiki.NewPage{Title: in.Title, Dir: in.Dir, Task: in.Task})
+	info, warn, err := s.w.Create(wiki.NewPage{Title: in.Title, Dir: in.Dir, Task: in.Task})
 	if err != nil {
 		fail(w, err, http.StatusBadRequest)
 		return
 	}
 	s.bump()
-	writeJSON(w, info)
+	writeJSON(w, struct {
+		wiki.PageInfo
+		Warning string `json:"warning"`
+	}{info, warning(warn)})
 }
 
 func (s *Server) handleTask(w http.ResponseWriter, r *http.Request) {
@@ -416,12 +494,13 @@ func (s *Server) handleTask(w http.ResponseWriter, r *http.Request) {
 			fail(w, errors.New("that line now holds "+strconv.Quote(t.Text)+"; reload the page"), http.StatusConflict)
 			return
 		}
-		if err := s.w.SetTaskStatus(t, in.Status); err != nil {
+		warn, err := s.w.SetTaskStatus(t, in.Status)
+		if err != nil {
 			fail(w, err, http.StatusConflict)
 			return
 		}
 		s.bump()
-		writeJSON(w, map[string]string{"status": in.Status})
+		writeJSON(w, map[string]string{"status": in.Status, "warning": warning(warn)})
 		return
 	}
 	fail(w, errors.New("no task on that line"), http.StatusNotFound)

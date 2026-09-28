@@ -88,6 +88,22 @@ func (e *Edit) Finish() (string, error) {
 	return strings.TrimRight(text, "\n"), nil
 }
 
+// Kept wraps err, a failed write of edited text, with a new file that holds
+// the text, so it outlives the editing session's temporary file.
+func Kept(err error, text string) error {
+	f, kerr := os.CreateTemp("", "gwiki-edit-*.md")
+	if kerr == nil {
+		_, kerr = f.WriteString(text)
+		if cerr := f.Close(); kerr == nil {
+			kerr = cerr
+		}
+	}
+	if kerr != nil {
+		return fmt.Errorf("%w; your text could not be kept: %v", err, kerr)
+	}
+	return fmt.Errorf("%w; your text is in %s", err, f.Name())
+}
+
 // Cleanup removes the temporary file. It is safe to call more than once.
 func (e *Edit) Cleanup() { os.Remove(e.Path) }
 

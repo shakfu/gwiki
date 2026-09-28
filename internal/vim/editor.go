@@ -36,7 +36,7 @@ func (m Mode) String() string {
 // Hooks are what the host does for the editor. A nil hook reports that the
 // command is not available here.
 type Hooks struct {
-	Save      func(force bool) error
+	Save      func(force bool) (warning string, err error)
 	Quit      func(force bool) error
 	Reload    func() error
 	Follow    func() error // ctrl-] and gf

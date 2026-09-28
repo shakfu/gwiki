@@ -159,7 +159,7 @@ func (e *Editor) opRange(op string, keys []string, count int) (Pos, Pos, bool, r
 	cur := e.Cursor
 	// A count between the operator and the motion multiplies the outer one.
 	if inner, i := readCount(keys, 0); i > 0 {
-		count *= inner
+		count = min(count*inner, maxCount)
 		keys = keys[i:]
 		if len(keys) == 0 {
 			return cur, cur, false, needMore
@@ -290,14 +290,21 @@ func (e *Editor) skipSpace(p Pos) Pos {
 func (e *Editor) wordBack(n int, big bool) Pos {
 	p := e.Cursor
 	for i := 0; i < n; i++ {
-		p = e.stepBack(p)
+		start := p
+		if p = e.stepBack(p); p == start {
+			break // the start of the buffer
+		}
 		for {
 			line := e.Buf.Line(p.Line)
 			if p.Col < len(line) && isSpace(line[p.Col]) || len(line) == 0 && p.Col == 0 && p.Line > 0 {
 				if len(line) == 0 {
 					break
 				}
-				p = e.stepBack(p)
+				q := e.stepBack(p)
+				if q == p {
+					break
+				}
+				p = q
 				continue
 			}
 			break
@@ -328,8 +335,12 @@ func (e *Editor) stepBack(p Pos) Pos {
 func (e *Editor) wordEnd(n int, big bool) Pos {
 	p := e.Cursor
 	for i := 0; i < n; i++ {
+		start := p
 		p = e.stepForward(p)
 		p = e.skipSpace(p)
+		if p == start {
+			break // the end of the buffer
+		}
 		line := e.Buf.Line(p.Line)
 		if p.Col < len(line) {
 			c := classAt(line, p.Col, big)
@@ -413,6 +424,9 @@ func (e *Editor) wordUnderCursor() string {
 func (e *Editor) paragraph(forward bool, n int) Pos {
 	l := e.Cursor.Line
 	for i := 0; i < n; i++ {
+		if forward && l == e.Buf.Lines()-1 || !forward && l == 0 {
+			break
+		}
 		step := 1
 		if !forward {
 			step = -1
@@ -618,12 +632,18 @@ func (e *Editor) searchFrom(pattern string, dir, n int) (Pos, bool) {
 		e.fail("bad pattern: " + err.Error())
 		return e.Cursor, false
 	}
+	// The search wraps, so after one cycle of the matches the nth is known.
+	var seen []Pos
 	p := e.Cursor
 	for i := 0; i < n; i++ {
 		next, ok := e.searchOnce(re, p, dir)
 		if !ok {
 			return e.Cursor, false
 		}
+		if len(seen) > 0 && next == seen[0] {
+			return seen[(n-1)%len(seen)], true
+		}
+		seen = append(seen, next)
 		p = next
 	}
 	return p, true

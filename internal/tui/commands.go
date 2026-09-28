@@ -144,14 +144,19 @@ func (m *WikiModel) commandLine(line string) error {
 		if m.edit == nil {
 			return errors.New(":" + name + " needs an open page")
 		}
+		var warning string
 		if m.edit.ed.Dirty || force {
-			if err := m.editSave(force); err != nil {
+			var err error
+			if warning, err = m.editSave(force); err != nil {
 				return err
 			}
 			m.edit.ed.Dirty = false
 		}
 		if name == "w" || name == "write" {
 			m.setStatus("written " + m.edit.page)
+			if warning != "" {
+				m.status, m.statusErr = m.status+"; warning: "+warning, true
+			}
 			return nil
 		}
 		return m.editQuit(false)

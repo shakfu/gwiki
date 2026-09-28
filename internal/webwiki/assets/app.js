@@ -42,6 +42,12 @@ function say(text, isError) {
   if (text && !isError) setTimeout(() => { if (statusLine.textContent === text) say(""); }, 4000);
 }
 
+// sayWritten reports a write that landed, with what it left wrong.
+function sayWritten(text, res) {
+  if (res && res.warning) say(text + "; warning: " + res.warning, true);
+  else say(text);
+}
+
 // ---------------------------------------------------------------- helpers
 
 function el(tag, attrs = {}, ...children) {
@@ -110,9 +116,19 @@ function snippet(text) {
 
 // ---------------------------------------------------------------- the tree
 
+let staleMessage = "";
+
 async function loadTree() {
   const res = await api("/api/pages");
   pages = res.pages;
+  // A failed refresh stays on the status line until one succeeds.
+  if (res.stale) {
+    staleMessage = "the pages could not be re-read, so they show as last indexed: " + res.stale;
+    say(staleMessage, true);
+  } else if (staleMessage) {
+    if (statusLine.textContent === staleMessage) say("");
+    staleMessage = "";
+  }
   document.getElementById("project").textContent = res.name || "gwiki";
   document.title = (res.name || "gwiki") + " wiki";
   drawTree();
@@ -177,6 +193,7 @@ async function route() {
       case "search": await showSearch(arg); break;
       case "orphans": await showHealth("orphans"); break;
       case "deadends": await showHealth("deadEnds"); break;
+      case "skipped": await showSkipped(); break;
       case "tag": await showList("pages tagged #" + arg, (await api("/api/pages?tag=" + encodeURIComponent(arg))).pages); break;
       case "dir": await showList("pages in " + arg + "/", (await api("/api/pages?dir=" + encodeURIComponent(arg))).pages); break;
       default: await showOverview();
@@ -205,6 +222,7 @@ async function showOverview() {
     el("li", {}, el("a", { href, text: label }), el("span", { class: "count" + (n ? " bad" : ""), text: String(n) }));
   const health = el("ul", {},
     count("broken links", o.broken, "#/broken"),
+    count("files not in the wiki", o.skipped.length, "#/skipped"),
     count("orphan pages", o.orphans.length, "#/orphans"),
     count("dead ends", o.deadEnds.length, "#/deadends"));
 
@@ -241,6 +259,15 @@ async function showHealth(which) {
   await showList(titles[which], o[which] || []);
 }
 
+async function showSkipped() {
+  const o = await api("/api/overview");
+  main.replaceChildren(
+    el("h1", { text: "Files not in the wiki" }),
+    el("p", { class: "meta", text: o.skipped.length + " files in the pages directory are left out; links to them count as broken" }),
+    el("ul", { class: "rows" }, ...o.skipped.map((s) =>
+      el("li", {}, el("span", { class: "where", text: s.path }), el("span", { class: "status", text: s.reason })))));
+}
+
 function taskRow(t, o) {
   const where = t.line ? t.page + ":" + t.line : t.page;
   const due = t.due
@@ -259,8 +286,8 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 async function setTask(t, status) {
   try {
-    await api("/api/task", { method: "POST", body: JSON.stringify({ page: t.page, line: t.line, text: t.text, status }) });
-    say(inlineText(t.text) + ": " + status);
+    const res = await api("/api/task", { method: "POST", body: JSON.stringify({ page: t.page, line: t.line, text: t.text, status }) });
+    sayWritten(inlineText(t.text) + ": " + status, res);
     route();
   } catch (err) {
     say(err.message, true);
@@ -276,9 +303,14 @@ async function showPage(id) {
 
   const body = el("div", { class: "rendered" });
   body.innerHTML = p.html;
-  // The title is above; a first heading repeating it would say it twice.
+  // The title is above; a first heading repeating it, at any level, would say
+  // it twice. Its id moves to the title, so a link to it still lands.
   const first = body.firstElementChild;
-  if (first && first.tagName === "H1" && first.textContent.trim() === (p.title || "").trim()) first.remove();
+  let titleId = null;
+  if (first && /^H[1-6]$/.test(first.tagName) && first.textContent.trim() === (p.title || "").trim()) {
+    titleId = first.id || null;
+    first.remove();
+  }
   body.querySelectorAll("a[href^='http']").forEach((a) => {
     a.target = "_blank";
     a.rel = "noreferrer noopener";
@@ -295,7 +327,7 @@ async function showPage(id) {
   if (p.due) meta.push("due " + p.due);
 
   main.replaceChildren(
-    el("h1", { text: p.title || p.path }),
+    el("h1", { text: p.title || p.path, id: titleId }),
     el("p", { class: "meta" }, meta.join("  -  "), " ",
       ...(p.tags || []).map((t) => el("a", { class: "tag", href: "#/tag/" + encodeURIComponent(t), text: "#" + t })),
       " ",
@@ -305,7 +337,7 @@ async function showPage(id) {
 
   const anchor = location.hash.split("#")[2];
   if (anchor) {
-    const target = body.querySelector("#" + CSS.escape(anchor));
+    const target = main.querySelector("#" + CSS.escape(anchor));
     if (target) target.scrollIntoView();
   } else {
     main.scrollTop = 0;
@@ -414,7 +446,7 @@ async function save(area) {
       body: JSON.stringify({ page: editing.page, base: editing.base, text: area.value }),
     });
     editing.base = res.hash;
-    say("saved " + editing.page);
+    sayWritten("saved " + editing.page, res);
     location.hash = pageHref(editing.page).slice(1);
   } catch (err) {
     if (err.status === 409) {
@@ -466,7 +498,7 @@ async function newPage() {
     const info = await api("/api/new", { method: "POST", body: JSON.stringify({ title, dir, task: false }) });
     await loadTree();
     location.hash = pageHref(info.path).slice(1);
-    say("created " + info.path);
+    sayWritten("created " + info.path, info);
   } catch (err) {
     say(err.message, true);
   }

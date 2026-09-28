@@ -123,43 +123,49 @@ func (m *WikiModel) dropDraft() {
 func (m *WikiModel) editChanged() { m.edit.draftPending = true }
 
 // writeDraft saves the buffer beside the wiki, so an interrupted edit is not
-// lost. It runs on the poll rather than on every keystroke.
-func (m *WikiModel) writeDraft() {
+// lost. It runs on the poll rather than on every keystroke; a failed write is
+// tried again on the next.
+func (m *WikiModel) writeDraft() error {
 	e := m.edit
 	if e == nil || !e.draftPending {
-		return
+		return nil
+	}
+	if err := os.MkdirAll(m.draftsDir(), 0o755); err != nil {
+		return fmt.Errorf("save a draft: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(m.draftsDir(), draftName(e.page)), []byte(e.base+"\n"+e.ed.Text()), 0o644); err != nil {
+		return fmt.Errorf("save a draft: %w", err)
 	}
 	e.draftPending = false
-	if err := os.MkdirAll(m.draftsDir(), 0o755); err != nil {
-		return
-	}
-	os.WriteFile(filepath.Join(m.draftsDir(), draftName(e.page)), []byte(e.base+"\n"+e.ed.Text()), 0o644)
+	return nil
 }
 
-// editSave writes the buffer to the page. force writes over a page that
-// changed on disk.
-func (m *WikiModel) editSave(force bool) error {
+// editSave writes the buffer to the page, and returns what the write left
+// wrong. force writes over a page that changed on disk, or again in place of
+// one removed.
+func (m *WikiModel) editSave(force bool) (string, error) {
 	e := m.edit
 	text := e.ed.Text()
-	base := e.base
-	if force {
-		if _, hash, err := m.w.Read(e.page); err == nil {
-			base = hash
-		}
-	}
 	var conflict *wiki.ErrConflict
-	switch err := m.w.Write(e.page, []byte(text), base); {
+	warn, err := m.w.Write(e.page, []byte(text), e.base)
+	if force && errors.As(err, &conflict) {
+		warn, err = m.w.Write(e.page, []byte(text), conflict.CurrentHash)
+	}
+	switch {
+	case errors.As(err, &conflict) && conflict.CurrentHash == "":
+		return "", errors.New(e.page + " was removed on disk; :w! writes it again")
 	case errors.As(err, &conflict):
-		return errors.New(e.page + " changed on disk; :w! overwrites it, :e! loads it and loses your edits")
+		return "", errors.New(e.page + " changed on disk; :w! overwrites it, :e! loads it and loses your edits")
 	case err != nil:
-		return err
+		return "", err
 	}
 	e.base = wiki.Hash([]byte(text))
 	e.outside = false
 	m.dropDraft()
 	m.afterWrite()
 	m.checkLinks()
-	return nil
+	m.skipped = len(warn.Skipped)
+	return warn.String(), nil
 }
 
 // editQuit leaves gwiki, as :q leaves vim.

@@ -6,23 +6,23 @@ IDs refer to `REVIEW.md` (commit `2cdc3d9`, 2026-09-27), which holds the evidenc
 
 ## High
 
-- [ ] W1. `Create` loops forever when `os.Stat` fails with anything but "not exist" (`ENAMETOOLONG`, `ENOTDIR`). `internal/wiki/ops.go:94-99`
+- [x] W1. `Create` loops forever when `os.Stat` fails with anything but "not exist" (`ENAMETOOLONG`, `ENOTDIR`). `internal/wiki/ops.go:94-99`
 
-- [ ] W2. A move that fails part-way leaves some pages rewritten and the cache stale. Write temp files first, rename `to`, then linking pages, then remove `from`. `internal/wiki/write.go:103-113`, `internal/wiki/move.go:187-197`
+- [x] W2. A move that fails part-way leaves some pages rewritten and the cache stale. Write temp files first, rename `to`, then linking pages, then remove `from`. `internal/wiki/write.go:103-113`, `internal/wiki/move.go:187-197`
 
-- [ ] W3. `commit` returns the `Refresh` error after the write has landed; one unreadable page fails every write and `Open`. `internal/wiki/write.go:114-116`
+- [x] W3. `commit` returns the `Refresh` error after the write has landed; one unreadable page fails every write and `Open`. `internal/wiki/write.go:114-116`
 
-- [ ] S1. Symlinks escape the wiki and the repository: read, write and create through MCP and the web view. Consider `os.Root`. `internal/wiki/write.go:154-172`, `internal/wiki/refresh.go:231`
+- [x] S1. Symlinks escape the wiki and the repository: read, write and create through MCP and the web view. Consider `os.Root`. `internal/wiki/write.go:154-172`, `internal/wiki/refresh.go:231`
 
-- [ ] T1. A buffer with unsaved changes cannot be saved after its page is deleted; `:w` and `:w!` both conflict. `internal/tui/wiki_edit.go:141-156`
+- [x] T1. A buffer with unsaved changes cannot be saved after its page is deleted; `:w` and `:w!` both conflict. `internal/tui/wiki_edit.go:141-156`
 
-- [ ] T2. An operator followed by `/` or `?` runs at once on the cursor character and stays pending; register is ignored. `internal/vim/motion.go:169-173`
+- [x] T2. An operator followed by `/` or `?` runs at once on the cursor character and stays pending; register is ignored. `internal/vim/motion.go:169-173`
 
-- [ ] T3. Unbounded counts crash (OOM, overflow panic) or hang the process, losing unsaved edits. `internal/vim/normal.go:65-75`, `motion.go:292,330,415,622`
+- [x] T3. Unbounded counts crash (OOM, overflow panic) or hang the process, losing unsaved edits. `internal/vim/normal.go:65-75`, `motion.go:292,330,415,622`
 
 ## Medium
 
-- [ ] P1. goldmark v1.7.16 has a reachable XSS (GO-2026-5320); update to v1.7.17 or later. `go.mod`
+- [x] P1. goldmark v1.7.16 has a reachable XSS (GO-2026-5320); update to v1.7.17 or later. `go.mod`
 
 - [ ] W4. `Promote` slices before it checks bounds; a stale `Task` panics. `internal/wiki/ops.go:443,449`
 
@@ -32,7 +32,7 @@ IDs refer to `REVIEW.md` (commit `2cdc3d9`, 2026-09-27), which holds the evidenc
 
 - [ ] W7. A move of an untitled page breaks `[[title]]` links. `internal/wiki/move.go:85-86`
 
-- [ ] W8. `SetBody`, `Remove`, `Tag`, `SetTaskStatus` (task page) and `Fix` take no base hash. README claim about writes is false for them. `internal/wiki/ops.go:235-325,402-410`, `internal/wiki/fix.go:202-215`
+- [ ] W8. `SetBody`, `Remove`, `Tag`, `SetTaskStatus` (task page) and `Fix` take no base hash; the README now says so. `internal/wiki/ops.go:235-325,402-410`, `internal/wiki/fix.go:202-215`
 
 - [ ] W9. `Open` deletes the cache on any connect error, including lock timeout. `internal/wiki/cache.go:113-118`
 
@@ -44,15 +44,15 @@ IDs refer to `REVIEW.md` (commit `2cdc3d9`, 2026-09-27), which holds the evidenc
 
 - [ ] S3. The language server keys buffers by the client's URI string; unsaved-changes guard on rename misses. `internal/lsp/server.go:350`, `features.go:146,610`
 
-- [ ] S4. `javascript:`, `data:`, `vbscript:` targets reach the page via autolinks and `href`. Allowlist `http`, `https`, `mailto`. `internal/webwiki/api.go:221-222`, `app.js:322`
+- [x] S4. `javascript:`, `data:`, `vbscript:` targets reach the page via autolinks and `href`. Allowlist `http`, `https`, `mailto`. `internal/webwiki/api.go:221-222`, `app.js:322`
 
 - [ ] S5. The web view and MCP apply different rules to the same write (line endings, task text check, empty base). `internal/webwiki/api.go`, `internal/mcp/wiki.go`
 
 - [ ] S6. `documentSymbol` returns line -1 and an empty name for an empty heading. `internal/lsp/features.go:287-290`
 
-- [ ] T4. `ctrl-c` and `q` quit with unsaved changes. `internal/tui/wiki.go:542-545`, `internal/tui/keys.go:73`
+- [x] T4. `ctrl-c` and `q` quit with unsaved changes. `internal/tui/wiki.go:542-545`, `internal/tui/keys.go:73`
 
-- [ ] T5. `gwiki edit` discards the edited text on a conflict. `internal/cli/wiki.go:704-718`, `internal/cli/commands.go:126,135`
+- [x] T5. `gwiki edit` discards the edited text on a conflict. `internal/cli/wiki.go:704-718`, `internal/cli/commands.go:126,135`
 
 - [ ] T6. `ctrl-o` in insert mode breaks undo. `internal/vim/editor.go:296-301`
 
@@ -80,7 +80,7 @@ IDs refer to `REVIEW.md` (commit `2cdc3d9`, 2026-09-27), which holds the evidenc
 
 - [ ] P4. Indirect dependencies lag: `golang.org/x/text` v0.3.8, `go-runewidth` v0.0.16.
 
-- [ ] P5. Docs describe behaviour the code lacks: query-refresh claim (`internal/wiki/project.go:1-6`); `gwiki edit` "rather than a lost edit" (`internal/cli/wiki.go:702`).
+- [ ] P5. Docs describe behaviour the code lacks: query-refresh claim (`internal/wiki/project.go:1-6`). (`gwiki edit` now keeps the text on a conflict, so its comment holds.)
 
 - [ ] W12. No `fsync` of the parent directory after rename or remove. `write.go:105,149`
 
@@ -112,7 +112,7 @@ IDs refer to `REVIEW.md` (commit `2cdc3d9`, 2026-09-27), which holds the evidenc
 
 - [ ] S12. Web errors return absolute paths. `webwiki/api.go:303`
 
-- [ ] S13. `checkDisk` drops `Refresh` errors; live updates stop silently. `webwiki/server.go:226-233`
+- [x] S13. `checkDisk` drops `Refresh` errors; live updates stop silently. `webwiki/server.go:226-233`
 
 - [ ] S14. MCP has no frame size limit. `mcp/mcp.go:144-159`
 
@@ -130,7 +130,7 @@ IDs refer to `REVIEW.md` (commit `2cdc3d9`, 2026-09-27), which holds the evidenc
 
 - [ ] T19. On `- [x] done [ ] other`, the toggle changes the second box. `vim/editor.go:479`
 
-- [ ] T20. Draft write errors are dropped and not retried; the write is not atomic. `tui/wiki_edit.go:132-136`
+- [ ] T20. The draft write is not atomic. (Its errors are now reported and retried.) `tui/wiki_edit.go:132-136`
 
 - [ ] T21. A restored stale draft takes the current hash, so `:w` overwrites the newer page. `tui/wiki_edit.go:108-109`
 
@@ -157,3 +157,7 @@ IDs refer to `REVIEW.md` (commit `2cdc3d9`, 2026-09-27), which holds the evidenc
 - [ ] `-C <dir>`, as in `git -C`: open the project at a path instead of discovering one. Useful for scripts and per-project MCP registration.
 
 - [ ] A view across projects: open tasks from every known project. It needs a list of known projects, which nothing records today.
+
+- [ ] Show an unlabelled wiki link to a heading as `Drawing > Markdown`, as Obsidian does, not as written (`Drawing#Markdown`). The default label is set in the parser, so the terminal and browser views change together. `internal/markdown/wikilink.go:85-87`
+
+- [ ] A backlink in the browser view scrolls to the link itself and highlights it. It now lands on the heading above, since the rendered page has no line numbers. Needs each link element marked with its source line (`data-line`), in the renderer, the page API and `app.js`. `internal/markdown/html.go`, `internal/webwiki/api.go` (`backHref`)

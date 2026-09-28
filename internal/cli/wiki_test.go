@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -511,5 +512,58 @@ func TestWikiServeFlags(t *testing.T) {
 	}
 	if _, stderr, code := f.run("serve", "--token", "short"); code == 0 || !strings.Contains(stderr, "16 characters") {
 		t.Fatalf("a short token: exit %d, %s", code, stderr)
+	}
+}
+
+func TestWikiReportsSkippedFiles(t *testing.T) {
+	f := wikiFixture(t)
+	if err := os.Symlink("index.md", filepath.Join(f.dir, ".gwiki", "wiki", "alias.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, stderr, code := f.run("new", "Another page")
+	if code != 0 || strings.Count(stderr, "warning:") != 1 || !strings.Contains(stderr, "alias.md is not in the wiki: a symlink") {
+		t.Fatalf("new: exit %d, stderr %q", code, stderr)
+	}
+
+	out, stderr, code := f.run("check")
+	if code != 1 || !strings.Contains(stderr, "1 skipped file") || !strings.Contains(out, ".gwiki/wiki/alias.md") {
+		t.Fatalf("check: exit %d, stderr %q\n%s", code, stderr, out)
+	}
+	out, _, _ = f.run("check", "--json")
+	var all []map[string]any
+	if err := json.Unmarshal([]byte(out), &all); err != nil {
+		t.Fatal(err)
+	}
+	last := all[len(all)-1]
+	if last["path"] != "alias.md" || last["status"] != "skipped" || last["reason"] != "a symlink, which the wiki does not follow" {
+		t.Fatalf("check --json: %v", last)
+	}
+}
+
+func TestWikiEditKeepsTheTextOnAConflict(t *testing.T) {
+	f := wikiFixture(t)
+	page := filepath.Join(f.dir, ".gwiki", "wiki", "index.md")
+	// The editor saves the text, while someone else saves the page.
+	script := filepath.Join(t.TempDir(), "editor.sh")
+	body := fmt.Sprintf("#!/bin/sh\nprintf 'Mine.\\n' >> \"$1\"\nprintf '# Theirs\\n' > %q\n", page)
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("VISUAL", "")
+	t.Setenv("EDITOR", script)
+
+	_, stderr, code := f.run("edit", "index")
+	m := regexp.MustCompile(`your text is in (\S+)`).FindStringSubmatch(stderr)
+	if code != 1 || !strings.Contains(stderr, "changed after it was read") || m == nil {
+		t.Fatalf("edit: exit %d, stderr %q", code, stderr)
+	}
+	t.Cleanup(func() { os.Remove(m[1]) })
+	kept, err := os.ReadFile(m[1])
+	if err != nil || !strings.HasPrefix(string(kept), "# Home") || !strings.HasSuffix(string(kept), "Mine.\n") {
+		t.Fatalf("kept = %q, %v", kept, err)
+	}
+	if got := readPage(t, f, "index"); got != "# Theirs\n" {
+		t.Fatalf("the other save was overwritten: %q", got)
 	}
 }

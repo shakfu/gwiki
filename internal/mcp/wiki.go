@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -443,11 +444,16 @@ func (s *Server) wikiCheck(raw json.RawMessage) (string, error) {
 	if driftErr != nil && !errors.Is(driftErr, wiki.ErrNoHistory) {
 		return "", driftErr
 	}
+	skipped, err := s.wiki.Skipped()
+	if err != nil {
+		return "", err
+	}
 	if a.Page != "" {
 		p, err := wiki.CleanPath(a.Page)
 		if err != nil {
 			return "", err
 		}
+		skipped = slices.DeleteFunc(skipped, func(sk wiki.Skip) bool { return sk.Path != p+".md" })
 		var on []wiki.Link
 		for _, l := range broken {
 			if l.Page == p {
@@ -501,10 +507,24 @@ func (s *Server) wikiCheck(raw json.RawMessage) (string, error) {
 		}
 		b.WriteString(strings.TrimRight(sec.String(), "\n") + more(len(drifted), n, "drifted line anchors"))
 	}
+	if len(skipped) > 0 {
+		fmt.Fprintf(&b, "\n\nFiles in the pages directory that are not in the wiki: %d. Links to them count as broken.\n", len(skipped))
+		for _, sk := range skipped {
+			fmt.Fprintf(&b, "\n%s  %s", sk.Path, sk.Reason)
+		}
+	}
 	if driftErr != nil {
 		fmt.Fprintf(&b, "\n\nNote: %v.", driftErr)
 	}
 	return b.String(), nil
+}
+
+// warned adds the warnings from a write that landed to a tool's result.
+func warned(text string, warn wiki.Warnings) string {
+	if warn.Empty() {
+		return text
+	}
+	return text + "\nwarning: " + warn.String()
 }
 
 func taskLine(t wiki.Task) string {
@@ -570,7 +590,7 @@ func (s *Server) wikiCreate(raw json.RawMessage) (string, error) {
 	if err := decodeArgs(raw, &a); err != nil {
 		return "", err
 	}
-	info, err := s.wiki.Create(wiki.NewPage{Title: a.Title, Dir: a.Dir, Task: a.Task, Tags: a.Tags, Body: a.Body})
+	info, warn, err := s.wiki.Create(wiki.NewPage{Title: a.Title, Dir: a.Dir, Task: a.Task, Tags: a.Tags, Body: a.Body})
 	if err != nil {
 		return "", err
 	}
@@ -578,7 +598,7 @@ func (s *Server) wikiCreate(raw json.RawMessage) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("created %s\nfile: %s\nhash: %s", info.Path, info.File(), hash), nil
+	return warned(fmt.Sprintf("created %s\nfile: %s\nhash: %s", info.Path, info.File(), hash), warn), nil
 }
 
 func (s *Server) wikiEdit(raw json.RawMessage) (string, error) {
@@ -595,11 +615,11 @@ func (s *Server) wikiEdit(raw json.RawMessage) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	hash, err := s.wiki.Replace(p, a.Old, a.New, a.Base)
+	hash, warn, err := s.wiki.Replace(p, a.Old, a.New, a.Base)
 	if err != nil {
 		return "", writeErr(err)
 	}
-	return fmt.Sprintf("edited %s\nhash: %s", p, hash), nil
+	return warned(fmt.Sprintf("edited %s\nhash: %s", p, hash), warn), nil
 }
 
 func (s *Server) wikiWrite(raw json.RawMessage) (string, error) {
@@ -618,10 +638,11 @@ func (s *Server) wikiWrite(raw json.RawMessage) (string, error) {
 	if a.Base == "" {
 		return "", errors.New("base is the hash from gwiki_read; use gwiki_create for a new page")
 	}
-	if err := s.wiki.Write(p, []byte(a.Content), a.Base); err != nil {
+	warn, err := s.wiki.Write(p, []byte(a.Content), a.Base)
+	if err != nil {
 		return "", writeErr(err)
 	}
-	return fmt.Sprintf("wrote %s\nhash: %s", p, wiki.Hash([]byte(a.Content))), nil
+	return warned(fmt.Sprintf("wrote %s\nhash: %s", p, wiki.Hash([]byte(a.Content))), warn), nil
 }
 
 func (s *Server) wikiRename(raw json.RawMessage) (string, error) {
@@ -644,11 +665,12 @@ func (s *Server) wikiRename(raw json.RawMessage) (string, error) {
 
 	var plan *wiki.MovePlan
 	var broken []wiki.Link
+	var warn wiki.Warnings
 	if a.DryRun {
 		plan, err = s.wiki.PlanMove(from, to)
 	} else {
 		var res *wiki.MoveResult
-		if res, err = s.wiki.Move(from, to); err == nil {
+		if res, warn, err = s.wiki.Move(from, to); err == nil {
 			plan, broken = &res.MovePlan, res.Broken
 		}
 	}
@@ -680,7 +702,7 @@ func (s *Server) wikiRename(raw json.RawMessage) (string, error) {
 			b.WriteString("  " + linkLine(l) + "\n")
 		}
 	}
-	return strings.TrimRight(b.String(), "\n"), nil
+	return warned(strings.TrimRight(b.String(), "\n"), warn), nil
 }
 
 func (s *Server) wikiFixLink(raw json.RawMessage) (string, error) {
@@ -713,10 +735,11 @@ func (s *Server) wikiFixLink(raw json.RawMessage) (string, error) {
 		var news []string
 		for _, o := range offers {
 			if o.New == a.New {
-				if err := s.wiki.Fix(l, o); err != nil {
+				warn, err := s.wiki.Fix(l, o)
+				if err != nil {
 					return "", writeErr(err)
 				}
-				return fmt.Sprintf("fixed %s:%d  %s -> %s", p, a.Line, a.Link, o.New), nil
+				return warned(fmt.Sprintf("fixed %s:%d  %s -> %s", p, a.Line, a.Link, o.New), warn), nil
 			}
 			news = append(news, o.New)
 		}
@@ -739,10 +762,11 @@ func (s *Server) wikiFixLink(raw json.RawMessage) (string, error) {
 		if d.Offer.New != a.New {
 			return "", fmt.Errorf("%q is not an offered repair; the offer is: %s", a.New, d.Offer.New)
 		}
-		if err := s.wiki.Fix(d.Link, *d.Offer); err != nil {
+		warn, err := s.wiki.Fix(d.Link, *d.Offer)
+		if err != nil {
 			return "", writeErr(err)
 		}
-		return fmt.Sprintf("fixed %s:%d  %s -> %s", p, a.Line, a.Link, d.Offer.New), nil
+		return warned(fmt.Sprintf("fixed %s:%d  %s -> %s", p, a.Line, a.Link, d.Offer.New), warn), nil
 	}
 	return "", fmt.Errorf("no broken link or drifted line anchor %s on line %d of %s; run gwiki_check again", a.Link, a.Line, p)
 }
@@ -791,8 +815,9 @@ func (s *Server) wikiSetTask(raw json.RawMessage) (string, error) {
 	if a.Text != "" && strings.TrimSpace(a.Text) != t.Text {
 		return "", fmt.Errorf("%s now holds %q; list tasks again", a.Task, t.Text)
 	}
-	if err := s.wiki.SetTaskStatus(t, a.Status); err != nil {
+	warn, err := s.wiki.SetTaskStatus(t, a.Status)
+	if err != nil {
 		return "", writeErr(err)
 	}
-	return taskLine(wiki.Task{Page: t.Page, Line: t.Line, Text: t.Text, Status: a.Status, Priority: t.Priority, Due: t.Due}), nil
+	return warned(taskLine(wiki.Task{Page: t.Page, Line: t.Line, Text: t.Text, Status: a.Status, Priority: t.Priority, Due: t.Due}), warn), nil
 }

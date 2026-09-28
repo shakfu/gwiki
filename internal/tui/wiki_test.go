@@ -110,6 +110,8 @@ func (f *wikiFixture) press(keys ...string) tea.Cmd {
 			msgs = []tea.KeyMsg{{Type: tea.KeyBackspace}}
 		case "space":
 			msgs = []tea.KeyMsg{{Type: tea.KeySpace}}
+		case "ctrl+c":
+			msgs = []tea.KeyMsg{{Type: tea.KeyCtrlC}}
 		case "ctrl+p":
 			msgs = []tea.KeyMsg{{Type: tea.KeyCtrlP}}
 		case "ctrl+u":
@@ -948,6 +950,25 @@ func TestWikiEditorDraftsAndConflicts(t *testing.T) {
 		t.Fatalf("after :w!:\n%s", got)
 	}
 
+	// A page removed under unsaved changes: :w refuses, :w! writes it again.
+	f.press("x")
+	if err := os.Remove(filepath.Join(f.root, ".gwiki", "wiki", "index.md")); err != nil {
+		t.Fatal(err)
+	}
+	f.m.Update(pollMsg{})
+	f.press(":")
+	f.typing("w")
+	f.press("enter")
+	if !strings.Contains(f.view(), "removed on disk") {
+		t.Fatalf("no message for a removed page:\n%s", f.view())
+	}
+	f.press(":")
+	f.typing("w!")
+	f.press("enter")
+	if got := f.source("index"); got != f.m.edit.ed.Text() || f.m.edit.ed.Dirty {
+		t.Fatalf("after :w! on a removed page:\n%s", got)
+	}
+
 	// A draft is written as the buffer changes, and offered on reopening.
 	f.press("o")
 	f.typing("draft text")
@@ -1140,5 +1161,62 @@ func TestWikiArrowsScrollWrappedPage(t *testing.T) {
 	}
 	if v := flat(f.view()); !strings.Contains(v, "Para40") {
 		t.Fatalf("the preview does not reach the end:\n%s", v)
+	}
+}
+
+func TestWikiWarnsOfSkippedFiles(t *testing.T) {
+	f := newWikiFixture(t)
+	if err := os.Symlink("index.md", filepath.Join(f.root, ".gwiki", "wiki", "alias.md")); err != nil {
+		t.Fatal(err)
+	}
+	f.m.Update(pollMsg{})
+	if !f.m.statusErr || !strings.Contains(f.m.status, "alias.md is not in the wiki") {
+		t.Fatalf("after the poll: %q", f.m.status)
+	}
+
+	// A save in the buffer reports it with the write.
+	f.m.focus = focusContent
+	f.press("x")
+	f.press(":")
+	f.typing("w")
+	f.press("enter")
+	if msg := f.message(); !strings.Contains(msg, "written; warning: alias.md is not in the wiki") {
+		t.Fatalf("after :w: %q", msg)
+	}
+}
+
+func TestQuitKeysRefuseUnsavedChanges(t *testing.T) {
+	f := newWikiFixture(t)
+	f.m.focus = focusContent
+	f.press("x")
+	f.m.focus = focusTree
+
+	f.press("q")
+	if f.m.quitting || !strings.Contains(f.m.status, "unsaved changes") {
+		t.Fatalf("q quit, status %q", f.m.status)
+	}
+	// A key between two ctrl-c presses disarms the second.
+	f.press("ctrl+c", "j", "ctrl+c")
+	if f.m.quitting || !strings.Contains(f.m.status, "ctrl-c again") {
+		t.Fatalf("ctrl-c quit, status %q", f.m.status)
+	}
+	f.press("ctrl+c")
+	if !f.m.quitting {
+		t.Fatalf("a second ctrl-c did not quit: %q", f.m.status)
+	}
+	raw, err := os.ReadFile(filepath.Join(f.m.draftsDir(), draftName("index")))
+	if err != nil || !strings.HasSuffix(string(raw), f.m.edit.ed.Text()) {
+		t.Fatalf("draft = %q, %v", raw, err)
+	}
+}
+
+func TestQuitKeysQuitACleanBuffer(t *testing.T) {
+	for _, k := range []string{"q", "ctrl+c"} {
+		f := newWikiFixture(t)
+		f.m.focus = focusTree
+		f.press(k)
+		if !f.m.quitting {
+			t.Errorf("%s did not quit", k)
+		}
 	}
 }

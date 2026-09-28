@@ -111,6 +111,13 @@ type WikiModel struct {
 	status    string
 	statusErr bool
 
+	// skipped is how many files the wiki left out when last checked.
+	skipped int
+
+	// ctrlC is set by a ctrl-c refused for unsaved changes, so that a second
+	// one in a row quits.
+	ctrlC bool
+
 	getenv   func(string) string
 	now      func() time.Time
 	quitting bool
@@ -175,6 +182,7 @@ func NewWiki(w *wiki.Wiki) (*WikiModel, error) {
 		return nil, err
 	}
 	m.loadHome()
+	m.noteSkipped()
 	// The page the reader starts on: index, else the first page.
 	for _, p := range m.pages {
 		if p.Path == "index" {
@@ -217,6 +225,32 @@ func (m *WikiModel) Init() tea.Cmd { return poll() }
 
 func (m *WikiModel) setStatus(s string) { m.status, m.statusErr = s, false }
 func (m *WikiModel) setError(err error) { m.status, m.statusErr = err.Error(), true }
+
+// setWritten reports a write that landed, and what it left wrong.
+func (m *WikiModel) setWritten(s string, warn wiki.Warnings) {
+	if warn.Empty() {
+		m.setStatus(s)
+		return
+	}
+	m.status, m.statusErr = s+"; warning: "+warn.String(), true
+	m.skipped = len(warn.Skipped)
+}
+
+// noteSkipped warns when the number of files left out of the wiki changes.
+func (m *WikiModel) noteSkipped() {
+	skipped, err := m.w.Skipped()
+	if err != nil {
+		m.setError(err)
+		return
+	}
+	if len(skipped) == m.skipped {
+		return
+	}
+	m.skipped = len(skipped)
+	if len(skipped) > 0 {
+		m.status, m.statusErr = "warning: "+wiki.Warnings{Skipped: skipped}.String(), true
+	}
+}
 
 // ---------------------------------------------------------------- pages
 
@@ -287,6 +321,31 @@ func (m *WikiModel) rowKey(r treeRow) string {
 		return m.pages[r.page].Path
 	}
 	return ""
+}
+
+// quit leaves gwiki, unless the page has unsaved changes. A second ctrl-c in
+// a row quits anyway, once the changes are saved as a draft, which reopening
+// the page offers back; it is the way out that needs no command line.
+func (m *WikiModel) quit(ctrlC, again bool) {
+	if m.edit == nil || !m.edit.ed.Dirty {
+		m.quitting = true
+		return
+	}
+	if ctrlC && again {
+		m.edit.draftPending = true
+		if err := m.writeDraft(); err != nil {
+			m.setError(fmt.Errorf("%w; not quitting, so the changes are not lost", err))
+			return
+		}
+		m.quitting = true
+		return
+	}
+	msg := "the page has unsaved changes; :w writes them, :q! discards them"
+	if ctrlC {
+		m.ctrlC = true
+		msg += ", ctrl-c again keeps them as a draft"
+	}
+	m.setError(errors.New(msg))
 }
 
 // errUnsaved refuses to leave a page with unsaved changes, as vim does.
@@ -490,12 +549,15 @@ func (m *WikiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // pollDisk picks up pages changed outside the interface, and saves the
 // editor's draft.
 func (m *WikiModel) pollDisk() {
-	m.writeDraft()
+	if err := m.writeDraft(); err != nil {
+		m.setError(err)
+	}
 	ch, err := m.w.Refresh()
 	if err != nil {
 		m.setError(err)
 		return
 	}
+	m.noteSkipped()
 	if ch.Empty() {
 		return
 	}
@@ -539,8 +601,10 @@ func (m *WikiModel) pollDisk() {
 }
 
 func (m *WikiModel) key(msg tea.KeyMsg) {
+	again := m.ctrlC
+	m.ctrlC = false
 	if msg.Type == tea.KeyCtrlC {
-		m.quitting = true
+		m.quit(true, again)
 		return
 	}
 	if m.prompt != nil {
@@ -1192,11 +1256,12 @@ func (m *WikiModel) listEnter() {
 		if m.cursor >= len(m.offers) {
 			return
 		}
-		if err := m.w.Fix(m.offerFor, m.offers[m.cursor]); err != nil {
+		warn, err := m.w.Fix(m.offerFor, m.offers[m.cursor])
+		if err != nil {
 			m.setError(err)
 			return
 		}
-		m.setStatus("fixed: " + m.offers[m.cursor].New)
+		m.setWritten("fixed: "+m.offers[m.cursor].New, warn)
 		m.screen, m.cursor = m.offerFrom, 0
 		m.afterWrite()
 	}
@@ -1209,11 +1274,12 @@ func (m *WikiModel) toggleTask(t wiki.Task) {
 	if t.Line == 0 {
 		next = map[string]string{"open": "doing", "doing": "done", "done": "open"}[t.Status]
 	}
-	if err := m.w.SetTaskStatus(t, next); err != nil {
+	warn, err := m.w.SetTaskStatus(t, next)
+	if err != nil {
 		m.setError(err)
 		return
 	}
-	m.setStatus(t.Text + ": " + next)
+	m.setWritten(t.Text+": "+next, warn)
 	m.afterWrite()
 }
 
@@ -1309,9 +1375,14 @@ func (m *WikiModel) promptNew(title string) {
 		if m.edit != nil && m.edit.ed.Dirty {
 			return errUnsaved
 		}
-		info, err := m.w.Create(wiki.NewPage{Title: title, Dir: dir})
+		info, warn, err := m.w.Create(wiki.NewPage{Title: title, Dir: dir})
 		if err != nil {
 			return err
+		}
+		if warn.Stale != nil {
+			// Not in the cache, so it cannot be opened yet.
+			m.setWritten("created "+info.File(), warn)
+			return nil
 		}
 		if err := m.loadPages(); err != nil {
 			return err
@@ -1320,7 +1391,7 @@ func (m *WikiModel) promptNew(title string) {
 			return err
 		}
 		m.screen, m.focus = screenRead, focusContent
-		m.setStatus("created " + info.File())
+		m.setWritten("created "+info.File(), warn)
 		return nil
 	}
 	if strings.TrimSpace(title) != "" {
@@ -1371,7 +1442,7 @@ func (m *WikiModel) confirmMove(from, to string) {
 			m.setStatus("not moved")
 			return nil
 		}
-		res, err := m.w.Move(from, to)
+		res, warn, err := m.w.Move(from, to)
 		if err != nil {
 			return err
 		}
@@ -1388,7 +1459,7 @@ func (m *WikiModel) confirmMove(from, to string) {
 		if len(res.Broken) > 0 {
 			status += fmt.Sprintf("; %d links broken, :broken lists them", len(res.Broken))
 		}
-		m.setStatus(status)
+		m.setWritten(status, warn)
 		return nil
 	})
 }
@@ -1438,25 +1509,13 @@ func (m *WikiModel) edited(msg wikiEditedMsg) {
 		m.setStatus("no change")
 		return
 	}
-	out := []byte(strings.TrimRight(text, "\n") + "\n")
-	var conflict *wiki.ErrConflict
-	switch err := m.w.Write(msg.page, out, msg.hash); {
-	case errors.As(err, &conflict):
-		// Keep the edit rather than lose it with the temporary file.
-		kept, kerr := os.CreateTemp("", "gwiki-edit-*.md")
-		if kerr == nil {
-			_, kerr = kept.Write(out)
-			kept.Close()
-		}
-		if kerr != nil {
-			m.setError(fmt.Errorf("%w; your text could not be kept: %v", err, kerr))
-		} else {
-			m.setError(fmt.Errorf("%w; your text is in %s", err, kept.Name()))
-		}
+	out := strings.TrimRight(text, "\n") + "\n"
+	switch warn, err := m.w.Write(msg.page, []byte(out), msg.hash); {
 	case err != nil:
-		m.setError(err)
+		// Keep the edit rather than lose it with the temporary file.
+		m.setError(editor.Kept(err, out))
 	default:
-		m.setStatus("saved " + msg.page)
+		m.setWritten("saved "+msg.page, warn)
 	}
 	m.afterWrite()
 }

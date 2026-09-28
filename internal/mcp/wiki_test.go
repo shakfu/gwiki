@@ -303,3 +303,22 @@ func TestWikiCheckAndFixDrift(t *testing.T) {
 		t.Fatalf("check after fix:\n%s", out)
 	}
 }
+
+func TestWikiReportsSkippedFiles(t *testing.T) {
+	f := newFixture(t)
+	f.page("index", "# Home\n")
+	if err := os.Symlink("index.md", filepath.Join(f.wiki.PagesPath(), "alias.md")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.wiki.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+	out := f.mustCall("gwiki_check", nil)
+	if !strings.Contains(out, "not in the wiki: 1.") || !strings.Contains(out, "alias.md  a symlink") {
+		t.Fatalf("gwiki_check:\n%s", out)
+	}
+	out = f.mustCall("gwiki_create", map[string]any{"title": "New"})
+	if !strings.Contains(out, "\nwarning: alias.md is not in the wiki") {
+		t.Fatalf("gwiki_create:\n%s", out)
+	}
+}

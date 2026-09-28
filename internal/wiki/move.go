@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -74,7 +73,9 @@ func (w *Wiki) PlanMove(from, to string) (*MovePlan, error) {
 	if to == from {
 		return nil, errors.New("the page is already there")
 	}
-	if _, err := os.Stat(w.file(to)); err == nil {
+	if exists, err := w.pageExists(to); err != nil {
+		return nil, err
+	} else if exists {
 		return nil, fmt.Errorf("%w: %s", ErrExists, to)
 	}
 
@@ -199,14 +200,17 @@ func (w *Wiki) PlanMove(from, to string) (*MovePlan, error) {
 }
 
 // Move renames a page and rewrites the links to and from it; see PlanMove.
-func (w *Wiki) Move(from, to string) (*MoveResult, error) {
+//
+// When the cache could not be refreshed after the move, Broken is nil: the
+// links are not known.
+func (w *Wiki) Move(from, to string) (*MoveResult, Warnings, error) {
 	plan, err := w.PlanMove(from, to)
 	if err != nil {
-		return nil, err
+		return nil, Warnings{}, err
 	}
 	info, err := w.info(plan.From)
 	if err != nil {
-		return nil, err
+		return nil, Warnings{}, err
 	}
 	pages := []string{plan.To}
 	for _, fw := range plan.writes {
@@ -214,14 +218,18 @@ func (w *Wiki) Move(from, to string) (*MoveResult, error) {
 	}
 	before, err := w.brokenNear(pages, plan.From, plan.To, info.Title)
 	if err != nil {
-		return nil, err
+		return nil, Warnings{}, err
 	}
-	if err := w.commit(plan.writes); err != nil {
-		return nil, err
+	warn, err := w.commit(plan.writes)
+	if err != nil {
+		return nil, warn, err
+	}
+	if warn.Stale != nil {
+		return &MoveResult{MovePlan: *plan}, warn, nil
 	}
 	after, err := w.brokenNear(pages, plan.From, plan.To, info.Title)
 	if err != nil {
-		return nil, err
+		return nil, warn, err
 	}
 	res := &MoveResult{MovePlan: *plan, Broken: []Link{}}
 	was := map[string]int{}
@@ -239,7 +247,7 @@ func (w *Wiki) Move(from, to string) (*MoveResult, error) {
 		}
 		res.Broken = append(res.Broken, l)
 	}
-	return res, nil
+	return res, warn, nil
 }
 
 // brokenNear returns the broken links a move between from and to can change:

@@ -217,6 +217,14 @@ func TestSearchAndEx(t *testing.T) {
 		{name: "backward search", text: "one\ntwo\nth@ree\n", keys: "?two<enter>", at: Pos{1, 0}},
 		{name: "star", text: "beta x\nbe@ta\n", keys: "*", at: Pos{0, 0}},
 		{name: "d then search", text: "@one two three\n", keys: "d/three<enter>", want: "three\n"},
+		{name: "d then a cancelled search", text: "@one two\n", keys: "d/two<esc>", want: "one two\n"},
+		{name: "search with an operator and register", text: "@one two three\n", keys: `"ay/three<enter>`, want: "one two three\n",
+			check: func(t *testing.T, e *Editor) {
+				if got := e.registers['a'].text; got != "one two " {
+					t.Errorf("register a = %q", got)
+				}
+			}},
+		{name: "a large count of n", text: "@a\na\n", keys: "/a<enter>99999n", at: Pos{0, 0}},
 		{name: "substitute on the line", text: "@a a a\n", keys: ":s/a/b<enter>", want: "b a a\n"},
 		{name: "substitute all", text: "@a a a\n", keys: ":s/a/b/g<enter>", want: "b b b\n"},
 		{name: "substitute the file", text: "@a\na\n", keys: ":%s/a/b/g<enter>", want: "b\nb\n"},
@@ -236,7 +244,7 @@ func TestHooks(t *testing.T) {
 	var saved, quit, reloaded, followed, back bool
 	var clip string
 	e.Hooks = Hooks{
-		Save:      func(force bool) error { saved = true; return nil },
+		Save:      func(force bool) (string, error) { saved = true; return "", nil },
 		Quit:      func(force bool) error { quit = true; return nil },
 		Reload:    func() error { reloaded = true; return nil },
 		Follow:    func() error { followed = true; return nil },
@@ -397,5 +405,18 @@ func TestScrollingCountsWrappedRows(t *testing.T) {
 	e.Keys("ctrl+y")
 	if e.Top != 14 || e.Cursor.Line != 18 {
 		t.Fatalf("ctrl+y: top %d, cursor %d, want 14 and 18", e.Top, e.Cursor.Line)
+	}
+}
+
+func TestLargeCountsReturn(t *testing.T) {
+	const text = "  @one two\n\nthree four\n"
+	for _, k := range []string{
+		"99999999999999999999w", "99999999999999999999b", "99999999999999999999e",
+		"99999999999999999999}", "99999999999999999999{", "99999999999999999999/o<enter>",
+		"99999999999999999999dd", "99999d99999w", "yy99999999999999999999p", "b", "0b",
+	} {
+		t.Run(k, func(t *testing.T) {
+			edit(t, text, keys(k), "@")
+		})
 	}
 }

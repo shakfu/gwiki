@@ -123,7 +123,7 @@ func TestDriftBaselineIsPerLink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := w.Fix(ds[0].Link, *ds[0].Offer); err != nil {
+	if _, err := w.Fix(ds[0].Link, *ds[0].Offer); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.Join(drifts(t, w), "\n"); got != "p:3 line-moved /a.go#L4 -> /a.go#L5" {
@@ -237,7 +237,7 @@ func TestDriftSkipsTextWithUncommittedCopies(t *testing.T) {
 	if err != nil || len(ds) != 2 {
 		t.Fatalf("drift = %v, %v", ds, err)
 	}
-	if err := w.Fix(ds[0].Link, *ds[0].Offer); err != nil {
+	if _, err := w.Fix(ds[0].Link, *ds[0].Offer); err != nil {
 		t.Fatal(err)
 	}
 	if got := drifts(t, w); len(got) != 0 {

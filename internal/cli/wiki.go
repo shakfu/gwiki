@@ -5,11 +5,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/shakfu/gwiki/internal/display"
+	"github.com/shakfu/gwiki/internal/editor"
 	"github.com/shakfu/gwiki/internal/lsp"
 	"github.com/shakfu/gwiki/internal/mcp"
 	"github.com/shakfu/gwiki/internal/tui"
@@ -47,7 +49,10 @@ It also compares each line link's lines with the commit that added the link,
 and lists those whose lines moved (line-moved, with the new anchor as a repair)
 or changed (line-changed). These are warnings; --strict makes them fail the
 check too. A shallow clone has no history to compare against, so they are
-skipped with a note.`}
+skipped with a note.
+
+Files in the pages directory that the wiki leaves out, such as a symlink or a
+page it cannot read, are listed with status skipped and fail the check.`}
 	cmdWikiOrphans = &command{name: "orphans", args: "[--json]", summary: "pages no other page links to", run: wikiOrphans}
 	cmdWikiTasks   = &command{name: "tasks", args: "[-s status] [--json]", summary: "checklist items and task pages", run: wikiTasks}
 	cmdWikiNew     = &command{name: "new", args: "<title> [--in dir] [--task] [-t tag]... [-m body | --stdin]", summary: "create a page, or a task page", run: wikiNew}
@@ -140,14 +145,34 @@ func (a *App) openWiki() (*wiki.Wiki, error) {
 	return wiki.Open(p)
 }
 
-// withWiki opens the wiki, runs fn and closes the wiki.
+// withWiki opens the wiki, warns of files left out of it, runs fn and closes
+// the wiki.
 func (a *App) withWiki(fn func(*wiki.Wiki) error) error {
 	w, err := a.openWiki()
 	if err != nil {
 		return err
 	}
 	defer w.Close()
+	skipped, err := w.Skipped()
+	if err != nil {
+		return err
+	}
+	a.warn(wiki.Warnings{Skipped: skipped})
 	return fn(w)
+}
+
+// warn prints warnings to standard error. Skipped files are left to withWiki,
+// which reports them for every command.
+func (a *App) warn(warn wiki.Warnings) {
+	if warn.Stale == nil && len(warn.Skipped) == 0 {
+		return
+	}
+	fmt.Fprintf(a.Stderr, "%s %s\n", a.style(ansiYellow, "warning:"), warn)
+}
+
+// warnWritten prints what a write that landed left wrong.
+func (a *App) warnWritten(warn wiki.Warnings) {
+	a.warn(wiki.Warnings{Stale: warn.Stale})
 }
 
 func wikiInit(a *App, args []string) error {
@@ -427,13 +452,23 @@ func wikiCheck(a *App, args []string) error {
 		} else if err != nil {
 			return err
 		}
+		skipped, err := w.Skipped()
+		if err != nil {
+			return err
+		}
 		if *asJSON {
-			all := make([]any, 0, len(broken)+len(drifted))
+			all := make([]any, 0, len(broken)+len(drifted)+len(skipped))
 			for _, l := range broken {
 				all = append(all, l)
 			}
 			for _, d := range drifted {
 				all = append(all, d)
+			}
+			for _, s := range skipped {
+				all = append(all, struct {
+					wiki.Skip
+					Status string `json:"status"`
+				}{s, "skipped"})
 			}
 			if err := a.writeJSON(all); err != nil {
 				return err
@@ -454,11 +489,23 @@ func wikiCheck(a *App, args []string) error {
 				t.addStyled([]string{where, d.Status, written},
 					[]string{a.style(ansiDim, where), a.style(ansiYellow, d.Status), written})
 			}
+			for _, s := range skipped {
+				where := path.Join(wiki.DirName, wiki.PagesDir, s.Path)
+				t.addStyled([]string{where, "skipped", s.Reason},
+					[]string{a.style(ansiDim, where), a.style(ansiRed, "skipped"), s.Reason})
+			}
 			t.write(a.Stdout)
 		}
 		// An error, so the exit status is 1 for scripts and CI.
+		var failed []string
 		if len(broken) > 0 {
-			return errors.New(plural(len(broken), "broken link"))
+			failed = append(failed, plural(len(broken), "broken link"))
+		}
+		if len(skipped) > 0 {
+			failed = append(failed, plural(len(skipped), "skipped file"))
+		}
+		if len(failed) > 0 {
+			return errors.New(strings.Join(failed, ", "))
 		}
 		if len(drifted) > 0 && *strict {
 			return errors.New(plural(len(drifted), "drifted line anchor"))
@@ -535,9 +582,11 @@ func (a *App) fixLinks(w *wiki.Wiki, first bool) error {
 			}
 			choice = n - 1
 		}
-		if err := w.Fix(*l, offers[choice]); err != nil {
+		warn, err := w.Fix(*l, offers[choice])
+		if err != nil {
 			return err
 		}
+		a.warnWritten(warn)
 		fixed++
 		a.printf("%s  %s -> %s\n", a.style(ansiGreen, "fixed"), l.Written(), display.Line(offers[choice].New))
 	}
@@ -658,10 +707,11 @@ func wikiNew(a *App, args []string) error {
 		text = piped
 	}
 	return a.withWiki(func(w *wiki.Wiki) error {
-		info, err := w.Create(wiki.NewPage{Title: title, Dir: *dir, Task: *task, Tags: tags, Body: text})
+		info, warn, err := w.Create(wiki.NewPage{Title: title, Dir: *dir, Task: *task, Tags: tags, Body: text})
 		if err != nil {
 			return err
 		}
+		a.warnWritten(warn)
 		a.printf("%s  %s\n", a.style(ansiDim, info.File()), a.style(ansiBold, info.Title))
 		return nil
 	})
@@ -685,17 +735,18 @@ func wikiEdit(a *App, args []string) error {
 		if err != nil {
 			return err
 		}
+		var warn wiki.Warnings
 		switch {
 		case *stdin:
 			piped, err := a.readStdin()
 			if err != nil {
 				return err
 			}
-			if err := w.SetBody(info.Path, piped); err != nil {
+			if warn, err = w.SetBody(info.Path, piped); err != nil {
 				return err
 			}
 		case given["m"]:
-			if err := w.SetBody(info.Path, *body); err != nil {
+			if warn, err = w.SetBody(info.Path, *body); err != nil {
 				return err
 			}
 		default:
@@ -713,10 +764,12 @@ func wikiEdit(a *App, args []string) error {
 				a.printf("no change\n")
 				return nil
 			}
-			if err := w.Write(info.Path, []byte(strings.TrimRight(edited, "\n")+"\n"), hash); err != nil {
-				return err
+			out := strings.TrimRight(edited, "\n") + "\n"
+			if warn, err = w.Write(info.Path, []byte(out), hash); err != nil {
+				return editor.Kept(err, out)
 			}
 		}
+		a.warnWritten(warn)
 		a.printf("%s  updated\n", a.style(ansiDim, info.File()))
 		return nil
 	})
@@ -754,10 +807,11 @@ func wikiMove(a *App, args []string) error {
 			a.unrewritten(plan.Unrewritten)
 			return nil
 		}
-		res, err := w.Move(info.Path, to)
+		res, warn, err := w.Move(info.Path, to)
 		if err != nil {
 			return err
 		}
+		a.warnWritten(warn)
 		if *asJSON {
 			return a.writeJSON(res)
 		}
@@ -846,7 +900,7 @@ func wikiRemove(a *App, args []string) error {
 		if err != nil {
 			return err
 		}
-		back, err := w.Remove(info.Path, *force)
+		back, warn, err := w.Remove(info.Path, *force)
 		if len(back) > 0 {
 			a.printf("%s\n", a.style(ansiYellow, "linked from:"))
 			a.linkTable(back, true)
@@ -854,6 +908,7 @@ func wikiRemove(a *App, args []string) error {
 		if err != nil {
 			return err
 		}
+		a.warnWritten(warn)
 		a.printf("removed %s\n", info.File())
 		return nil
 	})
@@ -868,13 +923,19 @@ func wikiTag(a *App, args []string, add bool) error {
 		if err != nil {
 			return err
 		}
+		var warn wiki.Warnings
 		if add {
-			err = w.Tag(info.Path, args[1:], nil)
+			warn, err = w.Tag(info.Path, args[1:], nil)
 		} else {
-			err = w.Tag(info.Path, nil, args[1:])
+			warn, err = w.Tag(info.Path, nil, args[1:])
 		}
 		if err != nil {
 			return err
+		}
+		a.warnWritten(warn)
+		if warn.Stale != nil {
+			a.printf("%s  tagged\n", a.style(ansiDim, info.File()))
+			return nil
 		}
 		updated, err := w.Page(info.Path)
 		if err != nil {
@@ -895,9 +956,11 @@ func wikiStatus(a *App, args []string, status string) error {
 		if err != nil {
 			return err
 		}
-		if err := w.SetTaskStatus(t, status); err != nil {
+		warn, err := w.SetTaskStatus(t, status)
+		if err != nil {
 			return err
 		}
+		a.warnWritten(warn)
 		where := t.Page
 		if t.Line > 0 {
 			where = fmt.Sprintf("%s:%d", t.Page, t.Line)
@@ -922,10 +985,11 @@ func wikiPromote(a *App, args []string) error {
 		if err != nil {
 			return err
 		}
-		info, err := w.Promote(t, *dir)
+		info, warn, err := w.Promote(t, *dir)
 		if err != nil {
 			return err
 		}
+		a.warnWritten(warn)
 		a.printf("%s  %s  from %s:%d\n", a.style(ansiDim, info.File()), a.style(ansiBold, info.Title), t.Page, t.Line)
 		return nil
 	})

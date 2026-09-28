@@ -70,7 +70,7 @@ var keysGlobal = &keymap{"anywhere", []binding{
 	{keys: []string{"esc"}, show: "esc", help: "back to the overview or the page", run: (*WikiModel).escape},
 	{keys: []string{":"}, show: ":", help: "a command, as listed under commands", run: (*WikiModel).startCommand},
 	{keys: []string{"?"}, show: "?", help: "this help", run: (*WikiModel).openHelp},
-	{keys: []string{"q"}, show: "q ctrl-c", help: "quit", run: func(m *WikiModel) { m.quitting = true }},
+	{keys: []string{"q"}, show: "q ctrl-c", help: "quit; refused with unsaved changes, unless ctrl-c twice", run: func(m *WikiModel) { m.quit(false, false) }},
 }}
 
 var keysTabs = &keymap{"overview tabs", []binding{

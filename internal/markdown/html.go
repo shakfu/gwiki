@@ -9,6 +9,7 @@ import (
 	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/renderer"
+	"github.com/yuin/goldmark/renderer/html"
 	"github.com/yuin/goldmark/text"
 	"github.com/yuin/goldmark/util"
 )
@@ -122,6 +123,9 @@ func (r *wikiRenderer) render(w util.BufWriter, source []byte, node ast.Node, en
 		href = n.Target
 		if n.Anchor != "" {
 			href += "#" + n.Anchor
+		}
+		if html.IsDangerousURL([]byte(href)) {
+			href = "#"
 		}
 	}
 	w.WriteString(`<a href="`)

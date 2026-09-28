@@ -13,7 +13,8 @@ import (
 // cannot read, is deleted and rebuilt: the cache holds nothing the pages do not.
 // 4: a directory's README is titled, found and linked by the directory.
 // 5: a checklist item's text no longer holds its due: date.
-const schemaVersion = 5
+// 6: skipped lists the files a refresh left out.
+const schemaVersion = 6
 
 const schema = `
 CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
@@ -93,6 +94,9 @@ CREATE INDEX checklist_page ON checklist (page);
 CREATE TABLE gone (path TEXT NOT NULL, hash TEXT NOT NULL);
 CREATE INDEX gone_hash ON gone (hash);
 CREATE TABLE renames (old TEXT NOT NULL, new TEXT NOT NULL);
+
+-- skipped holds the files the last refresh left out, and why.
+CREATE TABLE skipped (path TEXT PRIMARY KEY, reason TEXT NOT NULL);
 
 CREATE VIRTUAL TABLE pages_fts USING fts5 (
 	title, headings, tags, body,

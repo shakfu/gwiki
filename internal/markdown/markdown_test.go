@@ -228,3 +228,10 @@ func BenchmarkParse(b *testing.B) {
 		Parse(src)
 	}
 }
+
+func TestAnUnresolvedWikiLinkNeverRunsScript(t *testing.T) {
+	out, err := HTML([]byte("[[javascript:alert(1)]]\n"), nil)
+	if err != nil || strings.Contains(string(out), `href="javascript:`) {
+		t.Fatalf("HTML = %s, %v", out, err)
+	}
+}

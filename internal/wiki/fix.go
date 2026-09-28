@@ -199,17 +199,17 @@ func (w *Wiki) offers(l Link, src []byte, ix *index, renames [][2]string, moved 
 }
 
 // Fix rewrites a broken link's destination with an offer.
-func (w *Wiki) Fix(l Link, o Offer) error {
+func (w *Wiki) Fix(l Link, o Offer) (Warnings, error) {
 	src, hash, err := w.Read(l.Page)
 	if err != nil {
-		return err
+		return Warnings{}, err
 	}
 	if err := checkDest(src, l); err != nil {
-		return err
+		return Warnings{}, err
 	}
 	out, err := applySpans(src, []span{{start: l.DestStart, end: l.DestEnd, old: string(src[l.DestStart:l.DestEnd]), new: FixText(l, src, o)}})
 	if err != nil {
-		return err
+		return Warnings{}, err
 	}
 	return w.Write(l.Page, out, hash)
 }

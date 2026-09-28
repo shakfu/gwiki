@@ -354,6 +354,24 @@ func TestPollNoticesOutsideChanges(t *testing.T) {
 	}
 }
 
+func TestASkippedFileGetsADiagnostic(t *testing.T) {
+	c := startPolling(t, newRepo(t), 20*time.Millisecond)
+	c.initialize(fullCapabilities)
+	if err := os.Symlink("orphan.md", filepath.Join(c.root, ".gwiki", "wiki", "alias.md")); err != nil {
+		t.Fatal(err)
+	}
+	uri := c.pageURI("alias")
+	c.open(uri, "# Orphan\n")
+	// The first publish may come before the poll sees the symlink.
+	d := c.diagnostics(uri)
+	if len(d) == 0 {
+		d = c.diagnostics(uri)
+	}
+	if len(d) != 1 || d[0].Code != "skipped" || !strings.Contains(d[0].Message, "a symlink") {
+		t.Fatalf("diagnostics = %+v", d)
+	}
+}
+
 // A committed line link whose lines moved gets an information diagnostic and a
 // quick fix once the server polls; editing the buffer's anchor clears it.
 func TestDriftDiagnostics(t *testing.T) {

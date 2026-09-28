@@ -56,7 +56,7 @@ display. The address is printed either way, and --open forces the attempt.
 		}
 
 		return a.withWiki(func(w *wiki.Wiki) error {
-			srv, err := webwiki.New(w, webwiki.Options{Token: *token})
+			srv, err := webwiki.New(w, webwiki.Options{Token: *token, Log: a.Stderr})
 			if err != nil {
 				return err
 			}

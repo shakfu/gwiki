@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -363,7 +364,12 @@ func TestFileView(t *testing.T) {
 	if !strings.Contains(file.Text, "func Lex()") {
 		t.Fatalf("file = %+v", file)
 	}
-	for _, path := range []string{"../../../etc/passwd", "/etc/passwd"} {
+	outside := filepath.Join(t.TempDir(), "secret")
+	f.writeFile(outside, "secret\n")
+	if err := os.Symlink(outside, filepath.Join(f.root, "src", "link")); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"../../../etc/passwd", "/etc/passwd", "src/link"} {
 		res := f.do("GET", "/api/file?p="+path, nil)
 		res.Body.Close()
 		if res.StatusCode == http.StatusOK {
@@ -633,4 +639,124 @@ for (const [text, want] of cases) {
 }
 console.log(failed === 0 ? "OK" : "FAILED " + failed);
 `)
+}
+
+func TestSkippedFilesAndWriteWarnings(t *testing.T) {
+	f := newFixture(t)
+	if err := os.Symlink("index.md", filepath.Join(f.root, ".gwiki", "wiki", "alias.md")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.w.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+	var o struct {
+		Skipped []struct{ Path, Reason string }
+	}
+	f.get("/api/overview", &o)
+	if len(o.Skipped) != 1 || o.Skipped[0].Path != "alias.md" {
+		t.Fatalf("overview skipped = %+v", o.Skipped)
+	}
+	res := f.do("POST", "/api/new", map[string]any{"title": "Fresh"})
+	defer res.Body.Close()
+	var created struct{ Path, Warning string }
+	if err := json.NewDecoder(res.Body).Decode(&created); err != nil || created.Path != "fresh" || !strings.Contains(created.Warning, "alias.md is not in the wiki") {
+		t.Fatalf("new = %+v, %v", created, err)
+	}
+}
+
+func TestOnlySafeLinkSchemesReachThePage(t *testing.T) {
+	f := newFixture(t)
+	f.write("evil", "# Evil\n\n[a](javascript:alert(1)) <javascript:alert(2)> [b](data:text/html,x) "+
+		"[c](VBScript:x) [ok](https://example.com) <mailto:a@example.com> [rel](//example.com/x)\n")
+	if _, err := f.w.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+	var p pageResponse
+	f.get("/api/page?p=evil", &p)
+	lower := strings.ToLower(p.HTML)
+	for _, bad := range []string{"javascript:", "data:", "vbscript:"} {
+		if strings.Contains(lower, `href="`+bad) {
+			t.Errorf("%s reached an href:\n%s", bad, p.HTML)
+		}
+	}
+	hrefs := map[string]string{}
+	for _, l := range p.Links {
+		hrefs[l.Written] = l.Href
+	}
+	for written, want := range map[string]string{
+		"javascript:alert(1)":  "#/",
+		"javascript:alert(2)":  "#/",
+		"data:text/html,x":     "#/",
+		"VBScript:x":           "#/",
+		"https://example.com":  "https://example.com",
+		"mailto:a@example.com": "mailto:a@example.com",
+		"//example.com/x":      "//example.com/x",
+	} {
+		if hrefs[written] != want {
+			t.Errorf("%s: href %q, want %q (all: %v)", written, hrefs[written], want, hrefs)
+		}
+	}
+}
+
+func TestAFailedRefreshIsShownUntilItClears(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads any directory")
+	}
+	f := newFixture(t)
+	pages := filepath.Join(f.root, ".gwiki", "wiki")
+	if err := os.Chmod(pages, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(pages, 0o755) })
+
+	stale := func() string {
+		var res struct{ Stale string }
+		f.get("/api/pages", &res)
+		return res.Stale
+	}
+	waitFor := func(ok func(string) bool) string {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			s := stale()
+			if ok(s) || time.Now().After(deadline) {
+				return s
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	if s := waitFor(func(s string) bool { return s != "" }); !strings.Contains(s, "permission denied") {
+		t.Fatalf("stale = %q", s)
+	}
+	if err := os.Chmod(pages, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if s := waitFor(func(s string) bool { return s == "" }); s != "" {
+		t.Fatalf("stale after the fix = %q", s)
+	}
+}
+
+func TestABacklinkLeadsToTheHeadingAboveIt(t *testing.T) {
+	f := newFixture(t)
+	f.write("linker", "# Linker\n\nFirst [[Orphan]].\n\n## Later section\n\nText.\n\n### Deeper\n\nAgain [[Orphan]].\n")
+	f.write("top", "Before any heading, [[Orphan]].\n\n# Top\n")
+	if _, err := f.w.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+	var p pageResponse
+	f.get("/api/page?p=orphan", &p)
+	var got []string
+	for _, l := range p.Backlinks {
+		got = append(got, fmt.Sprintf("%s:%d %s", l.Page, l.Line, l.Href))
+	}
+	want := []string{"linker:3 #/page/linker#linker", "linker:11 #/page/linker#deeper", "top:1 #/page/top"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("backlinks:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	// The anchor is the id the rendered page gives the heading.
+	var linker pageResponse
+	f.get("/api/page?p=linker", &linker)
+	if !strings.Contains(linker.HTML, `id="deeper"`) {
+		t.Fatalf("no heading with id deeper:\n%s", linker.HTML)
+	}
 }

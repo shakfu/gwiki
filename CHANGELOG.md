@@ -6,6 +6,48 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Fro
 
 ## [Unreleased]
 
+## [0.4.0]
+
+### Security
+
+**goldmark is updated to 1.7.17 for GO-2026-5320**, cross-site scripting in how it renders links, autolinks and images. The browser view reached it.
+
+**The browser view opens only `http`, `https` and `mailto` links.** A `javascript:`, `data:` or `vbscript:` link in a page reached the links panel as a working link. Other schemes are listed but lead nowhere. An allowlist rather than goldmark's denylist of dangerous schemes, because a denylist misses what it does not name.
+
+### Changed
+
+**The wiki follows no symlinks.** A symlinked page or directory in `.gwiki/wiki` is not indexed, read or written through, wherever it points. One pointing out of the wiki let MCP and the browser view read and write outside it. One pointing inside made two pages of one file, and a write replaced the symlink with a copy. The pages directory itself may still be a symlink. The browser view's source-file panel reads through `os.Root` on the repository, so a symlink there cannot lead outside it.
+
+**Files the wiki leaves out are reported.** Symlinks, and pages or directories that cannot be read, are listed with a reason. `gwiki check` shows them with status `skipped` and exits 1; with `--json` each is `{"path", "reason", "status": "skipped"}`. Every command warns of them on standard error. The terminal and browser overviews count them, MCP `gwiki_check` lists them, and the language server marks such a file when it is open. An unreadable file is retried on every refresh. The cache schema is now 6, so the cache is rebuilt on first use.
+
+**A write reports what it left wrong, by how much of it landed.** Nothing written: an error, as before. Part of a batch written: an error naming the pages written and those not. All written but the cache not updated: success, with a warning to run `gwiki cache --rebuild` if it persists. All written with files skipped: success, with a warning. The terminal, browser, MCP and CLI all show these warnings. A warning rather than an error for a landed write, because a caller that treated it as a failure would retry, and the retry conflicts with the write that landed.
+
+### Fixed
+
+**Creating a page could loop forever** when its path could not be checked for any reason but "not exist", such as a name too long or a file where a directory should be. The error is now returned.
+
+**A move that failed part-way left some pages rewritten and the cache stale.** Every page in a batch is now staged in a temporary file before any is replaced, new pages are renamed in first and removals come last, and the cache is refreshed after a partial write. A failure while staging writes nothing; a failure while renaming leaves the moved page in both places, never in neither, and names the pages written.
+
+**One unreadable page failed every write and `Open`.** A refresh now leaves it out and reports it; see above. An unreadable subdirectory failed the refresh the same way.
+
+**The browser view hid a failed refresh**, and showed pages as last indexed with no sign of it. The error now stays on the status line until a refresh succeeds, and `gwiki serve` logs it once when it starts and once when it clears.
+
+**A backlink in the browser view led back to the page it was listed on**, not to the page holding the link. It now opens the linking page at the heading above the link; the rendered page has no line numbers to go to.
+
+**The browser view showed a page's title twice** when the page opened with a heading repeating it at a level other than `#`, such as the `## Title` under a front matter `title:`. Such a heading is now dropped at any level, and its anchor moves to the title.
+
+**`q` and `ctrl-c` quit the terminal interface with unsaved changes.** Both now refuse, as `:q` does. A second `ctrl-c` in a row still quits, after saving the changes as a draft, which reopening the page offers back; it is the way out that needs no command line. A draft that fails to save is now reported and retried, and blocks that quit.
+
+**`gwiki edit` lost the edited text when the page changed meanwhile**, since the editor's temporary file was removed before the write was refused. The text is now kept in a file the error names, on any failed write, as the terminal interface already did on a conflict.
+
+**The README said every write checks for a page changed since it was read.** Only a write of a page's whole text does; a change to part of a page, such as a tag, applies to the page as it is.
+
+**`:w` and `:w!` both failed on a page deleted while its buffer had unsaved changes.** `:w` now says the page was removed, and `:w!` writes it again.
+
+**An operator before `/` or `?` ran at once on the cursor's character**, then again when the search ran, and ignored its register. `d/word<esc>` deleted a character; `"ay/word` yanked into the unnamed register. It now waits for the search.
+
+**A large count could crash or hang the editor**, losing unsaved edits: a count overflowed, `p` could exhaust memory, and `n`, `w`, `b`, `e`, `{` and `}` looped once per count. Counts are capped at 99,999, a paste at 16 MB, and a motion stops at the end of the buffer or after one cycle of search matches. `b` on leading whitespace at the start of the buffer looped forever even without a count.
+
 ## [0.3.0]
 
 ### Added

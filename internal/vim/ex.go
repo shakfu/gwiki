@@ -178,12 +178,16 @@ func (e *Editor) save(force, quit bool) {
 		e.fail("saving is not available here")
 		return
 	}
-	if err := e.Hooks.Save(force); err != nil {
+	warning, err := e.Hooks.Save(force)
+	if err != nil {
 		e.fail(err.Error())
 		return
 	}
 	e.Dirty = false
 	e.setMessage("written")
+	if warning != "" {
+		e.Message, e.Err = "written; warning: "+warning, true
+	}
 	if quit {
 		e.quit(force)
 	}

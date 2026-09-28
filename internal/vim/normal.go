@@ -62,13 +62,17 @@ func (e *Editor) parse() result {
 	return e.run(keys[i:], count, reg)
 }
 
+// maxCount bounds a count. It is more lines than a page has, and small enough
+// that a command repeated that often returns at once.
+const maxCount = 99999
+
 func readCount(keys []string, i int) (int, int) {
 	count := 0
 	for i < len(keys) && len(keys[i]) == 1 && keys[i][0] >= '0' && keys[i][0] <= '9' {
 		if keys[i] == "0" && count == 0 {
 			break // a bare 0 is a motion
 		}
-		count = count*10 + int(keys[i][0]-'0')
+		count = min(count*10+int(keys[i][0]-'0'), maxCount)
 		i++
 	}
 	return count, i
@@ -127,6 +131,10 @@ func (e *Editor) run(keys []string, count int, reg rune) result {
 		a, z, linewise, r := e.opRange(head, rest, atLeast(count))
 		if r != done {
 			return r
+		}
+		if e.waiting.active {
+			e.waiting.reg = reg // the search applies the operator
+			return done
 		}
 		e.applyOperator(head, a, z, linewise, reg)
 		return done
@@ -522,6 +530,8 @@ func (e *Editor) SetRegister(name rune, text string) {
 	e.registers[name] = register{text: text, linewise: strings.HasSuffix(text, "\n")}
 }
 
+const maxPaste = 16 << 20
+
 func (e *Editor) paste(after bool, count int, reg rune) {
 	if reg == 0 {
 		reg = '"'
@@ -529,6 +539,11 @@ func (e *Editor) paste(after bool, count int, reg rune) {
 	r := e.registers[reg]
 	if r.text == "" {
 		e.fail("register is empty")
+		return
+	}
+	// Bounded so a large count cannot exhaust memory.
+	if len(r.text)*count > maxPaste {
+		e.fail("too much text to paste")
 		return
 	}
 	text := strings.Repeat(r.text, count)

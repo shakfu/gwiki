@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"os"
 	"regexp"
 	"slices"
 	"strconv"
@@ -34,37 +33,49 @@ type NewPage struct {
 
 // Create writes a new page and returns it. Its file name is the title's slug;
 // a name already taken gets -2, -3 and so on.
-func (w *Wiki) Create(n NewPage) (PageInfo, error) {
+func (w *Wiki) Create(n NewPage) (PageInfo, Warnings, error) {
 	id, src, err := w.newSource(n, nil)
 	if err != nil {
-		return PageInfo{}, err
+		return PageInfo{}, Warnings{}, err
 	}
-	if err := w.commit([]fileWrite{{Page: id, Data: src}}); err != nil {
-		return PageInfo{}, err
+	warn, err := w.commit([]fileWrite{{Page: id, Data: src}})
+	if err != nil {
+		return PageInfo{}, warn, err
 	}
-	return w.info(id)
+	return w.created(id, strings.TrimSpace(n.Title), warn)
+}
+
+// created describes a page a write created. When the cache could not be
+// refreshed, the page is not in it; its path and title are what is known.
+func (w *Wiki) created(id, title string, warn Warnings) (PageInfo, Warnings, error) {
+	if warn.Stale != nil {
+		return PageInfo{Path: id, Title: title, Tags: []string{}}, warn, nil
+	}
+	info, err := w.info(id)
+	return info, warn, err
 }
 
 // CreateAll writes several pages in one commit, which a migration needs: one
 // commit each would re-index the wiki once per page. Pages are written in the
 // order given, and a title whose file name is taken gets a numeric suffix.
-func (w *Wiki) CreateAll(pages []NewPage) ([]string, error) {
+func (w *Wiki) CreateAll(pages []NewPage) ([]string, Warnings, error) {
 	taken := map[string]bool{}
 	var writes []fileWrite
 	var ids []string
 	for _, n := range pages {
 		id, src, err := w.newSourceAvoiding(n, taken)
 		if err != nil {
-			return nil, err
+			return nil, Warnings{}, err
 		}
 		taken[id] = true
 		ids = append(ids, id)
 		writes = append(writes, fileWrite{Page: id, Data: src})
 	}
-	if err := w.commit(writes); err != nil {
-		return nil, err
+	warn, err := w.commit(writes)
+	if err != nil {
+		return nil, warn, err
 	}
-	return ids, nil
+	return ids, warn, nil
 }
 
 // newSource chooses a new page's path and writes its source. front, when set,
@@ -92,7 +103,11 @@ func (w *Wiki) newSourceAvoiding(n NewPage, taken map[string]bool, front ...func
 		return "", nil, err
 	}
 	for i := 2; ; i++ {
-		if _, err := os.Stat(w.file(id)); os.IsNotExist(err) && !taken[id] {
+		exists, err := w.pageExists(id)
+		if err != nil {
+			return "", nil, err
+		}
+		if !exists && !taken[id] {
 			break
 		}
 		id = base + "-" + strconv.Itoa(i)
@@ -164,38 +179,39 @@ func (w *Wiki) info(id string) (PageInfo, error) {
 
 // Write replaces a page's whole source, given the hash of the source the
 // caller read.
-func (w *Wiki) Write(page string, src []byte, base string) error {
+func (w *Wiki) Write(page string, src []byte, base string) (Warnings, error) {
 	return w.commit([]fileWrite{{Page: page, Base: base, Data: src}})
 }
 
 // Replace swaps the one occurrence of old in a page for new, given the hash of
 // the source the caller read, and returns the page's new hash.
-func (w *Wiki) Replace(page, old, new, base string) (string, error) {
+func (w *Wiki) Replace(page, old, new, base string) (string, Warnings, error) {
 	src, hash, err := w.Read(page)
 	if err != nil {
-		return "", err
+		return "", Warnings{}, err
 	}
 	if hash != base {
-		return "", &ErrConflict{Page: page, Current: src, CurrentHash: hash}
+		return "", Warnings{}, &ErrConflict{Page: page, Current: src, CurrentHash: hash}
 	}
 	if old == "" {
-		return "", errors.New("the text to replace is empty")
+		return "", Warnings{}, errors.New("the text to replace is empty")
 	}
 	at := bytes.Index(src, []byte(old))
 	if at < 0 {
-		return "", fmt.Errorf("%s does not contain the text to replace", page)
+		return "", Warnings{}, fmt.Errorf("%s does not contain the text to replace", page)
 	}
 	if n := occurrences(src, []byte(old)); n > 1 {
-		return "", fmt.Errorf("the text to replace occurs %d times in %s; include more of the text around it", n, page)
+		return "", Warnings{}, fmt.Errorf("the text to replace occurs %d times in %s; include more of the text around it", n, page)
 	}
 	out := append(append(bytes.Clone(src[:at]), new...), src[at+len(old):]...)
 	if bytes.Equal(out, src) {
-		return hash, nil
+		return hash, Warnings{}, nil
 	}
-	if err := w.Write(page, out, hash); err != nil {
-		return "", err
+	warn, err := w.Write(page, out, hash)
+	if err != nil {
+		return "", warn, err
 	}
-	return Hash(out), nil
+	return Hash(out), warn, nil
 }
 
 // occurrences counts the places sub starts in s, overlapping ones included.
@@ -232,10 +248,10 @@ func (w *Wiki) readIndexed(page string) ([]byte, string, error) {
 }
 
 // SetBody replaces everything after a page's front matter.
-func (w *Wiki) SetBody(page, body string) error {
+func (w *Wiki) SetBody(page, body string) (Warnings, error) {
 	src, hash, err := w.Read(page)
 	if err != nil {
-		return err
+		return Warnings{}, err
 	}
 	p := markdown.Parse(src)
 	body = strings.TrimRight(body, "\n") + "\n"
@@ -244,34 +260,35 @@ func (w *Wiki) SetBody(page, body string) error {
 	}
 	out := append(bytes.Clone(src[:p.BodyStart]), body...)
 	if bytes.Equal(out, src) {
-		return nil
+		return Warnings{}, nil
 	}
 	return w.Write(page, out, hash)
 }
 
 // Remove deletes a page. While other pages link to it, it refuses unless force
 // is set, and returns those links either way.
-func (w *Wiki) Remove(page string, force bool) ([]Link, error) {
+func (w *Wiki) Remove(page string, force bool) ([]Link, Warnings, error) {
 	back, err := w.Backlinks(page)
 	if err != nil {
-		return nil, err
+		return nil, Warnings{}, err
 	}
 	if len(back) > 0 && !force {
-		return back, fmt.Errorf("%d links reach %s; remove them first or force", len(back), page)
+		return back, Warnings{}, fmt.Errorf("%d links reach %s; remove them first or force", len(back), page)
 	}
 	_, hash, err := w.Read(page)
 	if err != nil {
-		return back, err
+		return back, Warnings{}, err
 	}
-	return back, w.commit([]fileWrite{{Page: page, Base: hash}})
+	warn, err := w.commit([]fileWrite{{Page: page, Base: hash}})
+	return back, warn, err
 }
 
 // Tag adds and removes front matter tags. Tags are compared without case and
 // written lowercase.
-func (w *Wiki) Tag(page string, add, remove []string) error {
+func (w *Wiki) Tag(page string, add, remove []string) (Warnings, error) {
 	src, hash, err := w.Read(page)
 	if err != nil {
-		return err
+		return Warnings{}, err
 	}
 	out, err := editFront(src, func(m *yaml.Node) error {
 		var have []string
@@ -319,7 +336,7 @@ func (w *Wiki) Tag(page string, add, remove []string) error {
 		return nil
 	})
 	if err != nil || bytes.Equal(out, src) {
-		return err
+		return Warnings{}, err
 	}
 	return w.Write(page, out, hash)
 }
@@ -384,11 +401,11 @@ func (w *Wiki) FindTask(ref string) (Task, error) {
 
 // SetTaskStatus sets a task page's status, or ticks or clears a checklist
 // item, which has no doing.
-func (w *Wiki) SetTaskStatus(t Task, status string) error {
+func (w *Wiki) SetTaskStatus(t Task, status string) (Warnings, error) {
 	switch status {
 	case "open", "doing", "done":
 	default:
-		return fmt.Errorf("status is open, doing or done, not %q", status)
+		return Warnings{}, fmt.Errorf("status is open, doing or done, not %q", status)
 	}
 	read := w.Read
 	if t.Line > 0 {
@@ -396,7 +413,7 @@ func (w *Wiki) SetTaskStatus(t Task, status string) error {
 	}
 	src, hash, err := read(t.Page)
 	if err != nil {
-		return err
+		return Warnings{}, err
 	}
 
 	if t.Line == 0 {
@@ -405,23 +422,23 @@ func (w *Wiki) SetTaskStatus(t Task, status string) error {
 			return nil
 		})
 		if err != nil || bytes.Equal(out, src) {
-			return err
+			return Warnings{}, err
 		}
 		return w.Write(t.Page, out, hash)
 	}
 
 	if status == "doing" {
-		return errors.New("a checklist item is open or done; promote it to a task page for doing")
+		return Warnings{}, errors.New("a checklist item is open or done; promote it to a task page for doing")
 	}
 	box := byte(' ')
 	if status == "done" {
 		box = 'x'
 	}
 	if t.Box <= 0 || t.Box >= len(src) || !strings.ContainsRune(" xX", rune(src[t.Box])) {
-		return &ErrConflict{Page: t.Page, Current: src, CurrentHash: hash}
+		return Warnings{}, &ErrConflict{Page: t.Page, Current: src, CurrentHash: hash}
 	}
 	if (src[t.Box] == ' ') == (box == ' ') {
-		return nil
+		return Warnings{}, nil
 	}
 	out := bytes.Clone(src)
 	out[t.Box] = box
@@ -432,13 +449,13 @@ var dueWord = regexp.MustCompile(`\s*\bdue:(\d{4}-\d{2}-\d{2})\b`)
 
 // Promote turns a checklist item into a task page in dir, and replaces the
 // item with a link to it.
-func (w *Wiki) Promote(t Task, dir string) (PageInfo, error) {
+func (w *Wiki) Promote(t Task, dir string) (PageInfo, Warnings, error) {
 	if t.Line == 0 {
-		return PageInfo{}, fmt.Errorf("%s is already a task page", t.Page)
+		return PageInfo{}, Warnings{}, fmt.Errorf("%s is already a task page", t.Page)
 	}
 	src, hash, err := w.readIndexed(t.Page)
 	if err != nil {
-		return PageInfo{}, err
+		return PageInfo{}, Warnings{}, err
 	}
 	lineEnd := bytes.IndexByte(src[t.Box:], '\n')
 	if lineEnd < 0 {
@@ -447,12 +464,12 @@ func (w *Wiki) Promote(t Task, dir string) (PageInfo, error) {
 		lineEnd += t.Box
 	}
 	if t.Box < 1 || src[t.Box-1] != '[' || t.Box+1 >= len(src) || src[t.Box+1] != ']' {
-		return PageInfo{}, &ErrConflict{Page: t.Page, Current: src, CurrentHash: hash}
+		return PageInfo{}, Warnings{}, &ErrConflict{Page: t.Page, Current: src, CurrentHash: hash}
 	}
 	text := strings.TrimSpace(string(src[t.Box+2 : lineEnd]))
 	title := strings.TrimSpace(dueWord.ReplaceAllString(text, ""))
 	if title == "" {
-		return PageInfo{}, errors.New("the item has no text to title a page")
+		return PageInfo{}, Warnings{}, errors.New("the item has no text to title a page")
 	}
 
 	id, page, err := w.newSource(NewPage{Title: title, Dir: dir, Task: true}, func(m *yaml.Node) {
@@ -464,7 +481,7 @@ func (w *Wiki) Promote(t Task, dir string) (PageInfo, error) {
 		}
 	})
 	if err != nil {
-		return PageInfo{}, err
+		return PageInfo{}, Warnings{}, err
 	}
 
 	// A title that will name only the new page is the shorter link.
@@ -477,12 +494,13 @@ func (w *Wiki) Promote(t Task, dir string) (PageInfo, error) {
 	}
 	out, err := applySpans(src, []span{{start: t.Box - 1, end: lineEnd, old: string(src[t.Box-1 : lineEnd]), new: link}})
 	if err != nil {
-		return PageInfo{}, err
+		return PageInfo{}, Warnings{}, err
 	}
-	if err := w.commit([]fileWrite{{Page: id, Data: page}, {Page: t.Page, Base: hash, Data: out}}); err != nil {
-		return PageInfo{}, err
+	warn, err := w.commit([]fileWrite{{Page: id, Data: page}, {Page: t.Page, Base: hash, Data: out}})
+	if err != nil {
+		return PageInfo{}, warn, err
 	}
-	return w.info(id)
+	return w.created(id, title, warn)
 }
 
 // readIndex loads the page index outside a refresh.
