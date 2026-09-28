@@ -96,7 +96,6 @@ type Editor struct {
 
 	pending   []string
 	registers map[rune]register
-	lastReg   rune
 
 	// seq records the keys of a change for ".", and lastChange is the change
 	// it repeats.

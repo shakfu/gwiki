@@ -880,3 +880,25 @@ func TestABatchRechecksEachPageBeforeItsRename(t *testing.T) {
 		t.Fatalf("partial.Err = %v, want a conflict on source", partial.Err)
 	}
 }
+
+// A page removed between the scan and its read is a removal, not a skipped
+// file (W14).
+func TestRefreshCountsAPageRemovedMidRefreshAsRemoved(t *testing.T) {
+	w, root := emptyWiki(t)
+	put(t, w, root, map[string]string{"gone": "# Gone\n", "kept": "# Kept\n"})
+	time.Sleep(20 * time.Millisecond)
+	write(t, pageFile(root, "gone"), "# Gone, edited\n")
+	beforeParse = func() { os.Remove(pageFile(root, "gone")) }
+	t.Cleanup(func() { beforeParse = func() {} })
+
+	ch, err := w.Refresh()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(ch.Removed, ",") != "gone" {
+		t.Fatalf("changes = %+v, want gone removed", ch)
+	}
+	if skipped, _ := w.Skipped(); len(skipped) != 0 {
+		t.Fatalf("skipped = %+v", skipped)
+	}
+}

@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Fro
 
 ## [Unreleased]
 
+### Added
+
+**CI.** `.github/workflows/ci.yml` runs `make ci`: `make check`, then `staticcheck` and `govulncheck` at versions pinned in the Makefile. The review found GO-2026-5320 by hand; `govulncheck` now checks for such advisories on every push.
+
 ### Security
 
 **The browser view's source-file panel no longer serves hidden files.** `/api/file` served any repository file under 1 MB, including `.env`, `.git/config` and `.gwiki/cache.db`. A path with a part starting with `.` is now refused, directly or through a symlink. Refusing dot-paths rather than serving only tracked or linked files: one check, no git call, and it covers untracked secrets. A line anchor into a dotfile, such as `.github/workflows/ci.yml#L3`, no longer shows its source.
@@ -57,6 +61,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Fro
 **A paste in normal mode ran as commands.** Pasted `dd` deleted a line. It is now inserted at the cursor as one change, as in vim.
 
 **The checkbox toggle changed the first `[ ]` on the line**, which on `- [x] done [ ] other` is in the text, not the item's box. It now changes the box after the bullet.
+
+**A page removed during a refresh was reported as a skipped file**, so `gwiki check` exited 1 and every command warned until the next refresh. It now counts as removed.
+
+**`dj` on the last line deleted it, and `dk` on the first line likewise.** In vim both fail. `j` on the last line and `k` on the first now fail; a count past the edge still stops at it.
 
 **The terminal editor wrapped lines by rune count**, so a line of CJK text or tabs ran past the pane and was cut. Rows are now measured in cells, as they are drawn.
 

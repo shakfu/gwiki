@@ -102,6 +102,10 @@ func TestMotions(t *testing.T) {
 func TestOperators(t *testing.T) {
 	runCases(t, []testCase{
 		{name: "dw", text: "@alpha beta gamma\n", keys: "dw", want: "beta gamma\n"},
+		{name: "dj on the last line does nothing", text: "one\n@two\n", keys: "dj", want: "one\ntwo\n"},
+		{name: "dk on the first line does nothing", text: "@one\ntwo\n", keys: "dk", want: "one\ntwo\n"},
+		{name: "d5j stops at the last line", text: "@one\ntwo\nthree\n", keys: "jd5j", want: "one\n"},
+		{name: "j on the last line stays", text: "one\ntw@o\n", keys: "jx", want: "one\ntw\n"},
 		{name: "d0 at column 0 does nothing", text: "@abc\n", keys: "d0", want: "abc\n"},
 		{name: "dh at column 0 does nothing", text: "@abc\n", keys: "dh", want: "abc\n"},
 		{name: "db at the start does nothing", text: "@abc\n", keys: "db", want: "abc\n"},

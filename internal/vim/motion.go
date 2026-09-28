@@ -42,9 +42,17 @@ func (e *Editor) motion(keys []string, count int, forOp bool) (Pos, bool, bool, 
 	case "g_":
 		text := strings.TrimRight(string(line), " \t")
 		return Pos{cur.Line, max(0, len([]rune(text))-1)}, false, true, done
+	// As in vim, j on the last line and k on the first fail, so dj there
+	// deletes nothing; a count past the end stops at it.
 	case "j", "down", "ctrl+n":
+		if cur.Line == e.Buf.Lines()-1 {
+			return cur, true, false, bad
+		}
 		return Pos{min(cur.Line+n, e.Buf.Lines()-1), e.wantCol}, true, false, done
 	case "k", "up", "ctrl+p":
+		if cur.Line == 0 {
+			return cur, true, false, bad
+		}
 		return Pos{max(cur.Line-n, 0), e.wantCol}, true, false, done
 	case "gj", "gk":
 		return e.displayLine(head == "gj", n), false, false, done

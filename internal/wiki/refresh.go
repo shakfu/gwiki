@@ -4,8 +4,10 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash/fnv"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -127,10 +129,14 @@ func (w *Wiki) Refresh() (Changes, error) {
 		}
 	}
 	unread := map[string]bool{}
+	beforeParse()
 	pages := slices.DeleteFunc(parseAll(root, todo), func(p parsed) bool {
 		if p.err != nil {
 			unread[p.rel] = true
-			skipped = append(skipped, skipErr(p.rel, p.err))
+			// Removed since the scan: a removal, not a file left out.
+			if !errors.Is(p.err, fs.ErrNotExist) {
+				skipped = append(skipped, skipErr(p.rel, p.err))
+			}
 		}
 		return p.err != nil
 	})
@@ -396,6 +402,9 @@ func readDir(root *os.Root, dir string) ([]os.DirEntry, error) {
 	defer f.Close()
 	return f.ReadDir(-1)
 }
+
+// beforeParse runs between the scan and the reads; a test removes a page there.
+var beforeParse = func() {}
 
 func parseAll(root *os.Root, files []fileStat) []parsed {
 	out := make([]parsed, len(files))

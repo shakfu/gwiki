@@ -213,6 +213,7 @@ gwiki follows no symlinks in `.gwiki/wiki`, and leaves out a page it cannot read
 ```sh
 make test        # everything, with the race detector
 make check       # vet, gofmt and test
+make ci          # check, staticcheck and govulncheck, as CI runs them
 make build-slim  # without the browser view
 make bench
 make cover

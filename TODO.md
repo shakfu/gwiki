@@ -74,9 +74,9 @@ IDs refer to `REVIEW.md` (commit `2cdc3d9`, 2026-09-27), which holds the evidenc
 
 ## Low
 
-- [ ] P2. No CI. Add one running `make check`, `staticcheck`, `govulncheck`. `Makefile:60`
+- [x] P2. No CI. Add one running `make check`, `staticcheck`, `govulncheck`. `Makefile:60`
 
-- [ ] P3. Unused symbols: `cursorBefore`, `cursorAfter`, `(*Buffer).end`, `lastReg`. `internal/vim/buffer.go:46,100`, `editor.go:98`
+- [x] P3. Unused symbols: `cursorBefore`, `cursorAfter`, `(*Buffer).end`, `lastReg`. `internal/vim/buffer.go:46,100`, `editor.go:98`
 
 - [ ] P4. Indirect dependencies lag: `golang.org/x/text` v0.3.8, `go-runewidth` v0.0.16.
 
@@ -86,7 +86,7 @@ IDs refer to `REVIEW.md` (commit `2cdc3d9`, 2026-09-27), which holds the evidenc
 
 - [ ] W13. A moved page gets mode 0644; the empty source directory stays. `write.go:126-129`, `move.go:193`
 
-- [ ] W14. A page deleted between scan and parse fails the whole refresh. `refresh.go:100-104`
+- [x] W14. A page deleted between scan and parse fails the whole refresh. `refresh.go:100-104`
 
 - [ ] W15. Rename detection matches on content hash alone; `renames` is never pruned. `refresh.go:151`
 
@@ -144,7 +144,7 @@ IDs refer to `REVIEW.md` (commit `2cdc3d9`, 2026-09-27), which holds the evidenc
 
 - [x] T26. A paste in normal mode ran as keystrokes, so pasted text ran as commands. Found 2026-09-28, not in `REVIEW.md`. `internal/tui/wiki_edit.go` (`keyContent`)
 
-- [ ] T27. `dj` on the last line deletes it; vim fails and does nothing. `k` on the first line likewise (inferred). Found 2026-09-28, not in `REVIEW.md`. `internal/vim/motion.go` (`opRange`)
+- [x] T27. `dj` on the last line deletes it; vim fails and does nothing. `k` on the first line likewise (inferred). Found 2026-09-28, not in `REVIEW.md`. `internal/vim/motion.go` (`opRange`)
 
 ## Design
 
