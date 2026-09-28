@@ -2,23 +2,48 @@
 
 A wiki of markdown pages kept in the repository it documents.
 
+## Features
+
+- **Plain files.** Pages are markdown in `.gwiki/wiki`, committed with the code. Any editor works.
+- **User wiki.** Notes that belong to no project live in `~/.gwiki`, opened with `-u`.
+
+- **Links into the code.** `[[wiki]]` and markdown links reach pages, headings, directories, source files and line ranges.
+
+- **Link checking.** Broken links and line anchors whose code moved are reported, with repairs to choose from.
+
+- **Moves keep links.** Moving a page rewrites every link to it; `--dry-run` lists them first.
+
+- **Tasks.** Checklist items and task pages, with status, priority and due dates.
+
+- **Search.** Ranked full-text search over titles, headings, tags and bodies.
+
+- **Terminal interface.** An overview, a page tree, and a vim buffer that follows links and shows backlinks.
+
+- **Language server.** Completion, diagnostics, go to definition, backlinks, rename and quick fixes in Neovim, Helix or Vim.
+
+- **Browser view.** `gwiki serve` shows and edits the wiki in a browser, with nothing to install.
+
+- **Agent server.** An MCP server lets a code agent read and edit pages without overwriting yours.
+
+- **Command line.** Every operation, with `--json` on read commands.
+
+- **Safe writes.** Writing a whole page that changed since it was read is refused, not merged.
+
+- **One executable.** Pure Go, with builds for macOS, Linux and Windows.
+
+## Overview
+
 Pages live in `.gwiki/wiki` and are committed with the code. They link to each other with `[[Page title]]` or markdown links, and to source files and line ranges such as `../../src/lexer.go#L42`. gwiki indexes the links, headings, tags and tasks in a cache it rebuilds from the pages, reports broken links, and rewrites links when a page moves.
 
-Pages are plain files, so any editor works. gwiki adds:
-
-- a terminal interface: an overview of the wiki, a page tree beside the page in a vim buffer that follows links, backlinks, search, broken links and tasks;
-
-- a language server, so Neovim, Helix or Vim complete links, flag broken ones and follow them;
-
-- an MCP server, so a code agent can read and edit pages without overwriting yours;
-
-- a command line for all of the above.
-
-All of it is one executable. A write of a page's whole text, from the editor, the browser or an agent, checks that the page has not changed since it was read, and refuses rather than overwrite. A command that changes part of a page, such as `edit -m`, a tag, a task's status or a link repair, applies it to the page as it is when the command runs.
+When the editor, the browser or an agent saves a whole page, gwiki first checks that the page has not changed since it was read. If it has, the save is refused, so one's edits are not overwritten. A command that changes only part of a page, such as `edit -m`, a tag, a task's status or a link repair, makes its change to the page as it is when the command runs.
 
 ![The gwiki overview on the latest tab: pages listed by title, path and when they changed](https://raw.githubusercontent.com/shakfu/gwiki/main/docs/media/gwiki-latest.png)
 
 ## Install
+
+Download an archive for macOS arm64, Linux x64 or Windows x64 from the [releases](https://github.com/shakfu/gwiki/releases), check it against `SHA256SUMS`, and put `gwiki` on your `PATH`. The binaries are not signed; on macOS, clear the quarantine flag once with `xattr -d com.apple.quarantine gwiki`.
+
+With Go:
 
 ```sh
 go install github.com/shakfu/gwiki/cmd/gwiki@latest
@@ -36,6 +61,21 @@ gwiki                                       # the interface, on the overview
 ```
 
 `init` also writes `.gwiki/config.json`, whose `name` is the project name the interface shows. It is the directory's name when `init` runs; edit it if you rename the directory.
+
+## Project and user wikis
+
+A project wiki lives in `.gwiki/wiki` in a repository and is committed with its code. gwiki finds it by walking up from the working directory, stopping at the repository root.
+
+Your user wiki lives in `~/.gwiki/wiki`, for notes that belong to no project. Only `-u` (or `--user`), before any command, opens it:
+
+```sh
+gwiki -u init                               # create ~/.gwiki
+gwiki -u new "Reading list" -m "..."
+gwiki -u                                    # the interface, on the user wiki
+gwiki -u mcp                                # an agent session on the user wiki
+```
+
+Nothing falls back to it. A command run where there is no project wiki reports "no gwiki found", so project notes never land in the user wiki by mistake. The two wikis do not link to each other. To version the user wiki, run `git init ~/.gwiki`, or keep it in a repository at `~`.
 
 ## Pages and links
 
@@ -166,7 +206,7 @@ Opens the wiki in your browser: the same overview, the page tree, pages with the
 
 The whole page is compiled into the binary, so there is nothing to install and it works with no network. The address carries an access token, and the API answers nothing without it: any page open in your browser can reach `127.0.0.1`, so the token, not the loopback binding, is the protection. `--no-open` prints the address without opening a browser, and `--addr` chooses the port. No browser opens over SSH, under CI, or on a Unix session with no display; `--open` forces it.
 
-Editing is a text box saved against the hash the page was read at, so a page saved elsewhere in the meantime is refused rather than overwritten. `make build-slim` (`-tags noweb`) leaves the browser view out.
+You edit a page in a text box. If the page was saved elsewhere since you opened it, your save is refused and the other save is kept. `make build-slim` (`-tags noweb`) leaves the browser view out.
 
 ## Agents
 
@@ -174,7 +214,7 @@ Editing is a text box saved against the hash the page was read at, so a page sav
 claude mcp add gwiki -- gwiki mcp
 ```
 
-The agent gets tools to list, search and read pages, create them, edit exact text or write whole pages against the hash it read, rename pages, list and repair broken links and line anchors whose code moved, and change task status. A write against a stale hash is refused and returns the current page to retry against. There is no delete tool.
+The agent gets tools to list, search and read pages, create them, edit exact text or write whole pages, rename pages, list and repair broken links and line anchors whose code moved, and change task status. If a page changed since the agent read it, the write is refused, and the agent gets the current page to try again. There is no delete tool.
 
 ## Commands
 

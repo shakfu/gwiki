@@ -5,6 +5,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -605,8 +606,8 @@ func TestCreateReportsAPathItCannotCheck(t *testing.T) {
 }
 
 func TestABatchThatCannotStageEveryPageWritesNone(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root ignores directory permissions")
+	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
+		t.Skip("root ignores directory permissions; on Windows, chmod only sets read-only")
 	}
 	w, root := moveFixture(t)
 	locked := filepath.Join(root, DirName, PagesDir, "notes", "deep")
@@ -632,8 +633,8 @@ func TestABatchThatCannotStageEveryPageWritesNone(t *testing.T) {
 }
 
 func TestAnUnreadablePageDoesNotFailWritesOrOpen(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root reads any file")
+	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
+		t.Skip("root reads any file; on Windows, chmod only sets read-only")
 	}
 	w, root := emptyWiki(t)
 	put(t, w, root, map[string]string{"a": "# A\n", "locked": "# Locked\n"})
@@ -727,8 +728,8 @@ func TestSymlinksAreRefusedAndReported(t *testing.T) {
 }
 
 func TestAnUnreadableDirectoryIsReportedAndRetried(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root reads any directory")
+	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
+		t.Skip("root reads any directory; on Windows, chmod only sets read-only")
 	}
 	w, root := emptyWiki(t)
 	put(t, w, root, map[string]string{"a": "# A\n", "locked/b": "# B\n"})
@@ -757,8 +758,8 @@ func TestAnUnreadableDirectoryIsReportedAndRetried(t *testing.T) {
 }
 
 func TestAMoveThatStopsPartWayNamesWhatLanded(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root ignores directory permissions")
+	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
+		t.Skip("root ignores directory permissions; on Windows, chmod only sets read-only")
 	}
 	w, root := emptyWiki(t)
 	put(t, w, root, map[string]string{"locked/a": "# A\n"})

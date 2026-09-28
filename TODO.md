@@ -156,6 +156,15 @@ IDs refer to `REVIEW.md` (commit `2cdc3d9`, 2026-09-27), which holds the evidenc
 
 - [ ] D4. Duplication and dead code: `plural`, `itoa`, aligned tables, `$VISUAL`/`$EDITOR` lookup, `_ = runes`, `ansiBlue`, `runNamed`. See `REVIEW.md` D4.
 
+## User wiki
+
+See `docs/dev/user-wiki.md`. Only `-u` opens the user wiki; nothing falls back to it.
+
+- [x] U1. `-u` / `--user` before any command opens `~/.gwiki`, for every command and server (`ui`, `serve`, `mcp`, `lsp`); `gwiki -u init` creates it.
+- [x] U2. Without `-u`, discovery stops at the repository root and never takes `~` for a project. `internal/wiki/project.go:61`
+- [x] U3. The user wiki's repository is found from `~/.gwiki` upward. `internal/wiki/project.go:148`
+- [x] U4. The interface header, `serve` and the browser view name the open wiki: "user" (from `Project.User`) or the project. No `--json` output carries a wiki name, so none was added.
+
 ## Ideas
 
 - [ ] `-C <dir>`, as in `git -C`: open the project at a path instead of discovering one. Useful for scripts and per-project MCP registration.

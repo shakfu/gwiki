@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Fro
 
 ## [Unreleased]
 
+## [0.6.0]
+
+### Added
+
+**A user wiki, in `~/.gwiki`, opened only with `-u` / `--user`.** `gwiki -u init` creates it; `-u` before any command, including `ui`, `serve`, `mcp` and `lsp`, works on it in place of the project's wiki. Nothing falls back to it, so a command run in a project with no wiki cannot write there. Its repository is `~/.gwiki/.git` or one at `~`; with neither, file links stay within `~/.gwiki`. The interface and the browser view name it "user", whatever its `config.json` says. See `docs/dev/user-wiki.md`.
+
+### Changed
+
+**Wiki discovery stops at the repository root, and skips the home directory.** A `.gwiki` above the repository, or in `~`, was found from any directory below it. The one in `~` is now the user wiki, which needs `-u`.
+
+**CI also runs the tests on macOS and Windows**, where the release binaries run but were only cross-compiled. Tests whose stand-in editor is a `/bin/sh` script, or that make a file unreadable with `chmod`, skip on Windows.
+
 ## [0.5.1]
 
 ### Added

@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -725,8 +726,8 @@ func TestOnlySafeLinkSchemesReachThePage(t *testing.T) {
 }
 
 func TestAFailedRefreshIsShownUntilItClears(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root reads any directory")
+	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
+		t.Skip("root reads any directory; on Windows, chmod only sets read-only")
 	}
 	f := newFixture(t)
 	pages := filepath.Join(f.root, ".gwiki", "wiki")

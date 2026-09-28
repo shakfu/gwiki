@@ -570,3 +570,81 @@ func TestRecentReadsGit(t *testing.T) {
 		t.Errorf("new = %+v", c)
 	}
 }
+
+// setHome points the home directory at a temporary one.
+func setHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // Windows
+	return home
+}
+
+// Discovery stops at the repository root and never takes the home directory's
+// .gwiki, the user wiki, for a project (U2).
+func TestDiscoverStopsAtTheRepositoryAndAtHome(t *testing.T) {
+	home := setHome(t)
+	if _, err := Init(home); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{home, filepath.Join(home, "notes")} {
+		os.MkdirAll(dir, 0o755)
+		if _, err := Discover(dir); !errors.Is(err, ErrNotFound) {
+			t.Errorf("Discover(%s) = %v, want not found: the user wiki needs -u", dir, err)
+		}
+	}
+
+	outer := filepath.Join(home, "work")
+	if _, err := Init(outer); err != nil {
+		t.Fatal(err)
+	}
+	inner := filepath.Join(outer, "repo")
+	if err := os.MkdirAll(filepath.Join(inner, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Discover(filepath.Join(inner)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Discover crossed the repository root: %v", err)
+	}
+	plain := filepath.Join(outer, "plain")
+	os.MkdirAll(plain, 0o755)
+	p, err := Discover(plain)
+	if err != nil || p.Root != outer {
+		t.Fatalf("Discover(%s) = %+v, %v; want %s outside a repository", plain, p, err, outer)
+	}
+	if p.User || p.Label() != "work" {
+		t.Fatalf("project wiki: User %v, label %q", p.User, p.Label())
+	}
+}
+
+// The user wiki's repository is found from ~/.gwiki upward, else is ~/.gwiki
+// itself, never the whole home directory (U3).
+func TestUserWikiRepository(t *testing.T) {
+	home := setHome(t)
+	if _, err := User(); !errors.Is(err, ErrNoUserWiki) {
+		t.Fatalf("User before init = %v", err)
+	}
+	p, err := InitUser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw := filepath.Join(home, DirName)
+	if !p.User || p.Label() != "user" {
+		t.Fatalf("user wiki: User %v, label %q", p.User, p.Label())
+	}
+	// The label does not depend on the config, which a user can edit.
+	write(t, filepath.Join(home, DirName, configFile), `{"name": "renamed"}`)
+	if p, _ := User(); p.Label() != "user" || p.Config.Name != "renamed" {
+		t.Fatalf("after a rename: label %q, name %q", p.Label(), p.Config.Name)
+	}
+	if p.Root != home || p.Repo != gw || p.PagesPath() != filepath.Join(gw, PagesDir) {
+		t.Fatalf("without git: root %s, repo %s", p.Root, p.Repo)
+	}
+	os.Mkdir(filepath.Join(home, ".git"), 0o755)
+	if p, _ := User(); p.Repo != home {
+		t.Fatalf("with a repository at ~: repo %s", p.Repo)
+	}
+	os.Mkdir(filepath.Join(gw, ".git"), 0o755)
+	if p, _ := User(); p.Repo != gw {
+		t.Fatalf("with ~/.gwiki/.git: repo %s", p.Repo)
+	}
+}

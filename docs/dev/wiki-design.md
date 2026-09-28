@@ -1154,7 +1154,8 @@ markdown host renders the copy. The export directory holds a manifest,
 ## 18. Open questions
 
 1. **Global notes.** Decided: dropped with the notes model (section 17,
-   "Notes removed"). There is no global wiki.
+   "Notes removed"). Superseded 2026-09-28 by a user wiki opened with `-u`;
+   see `user-wiki.md`.
 2. **Checklist items in other files.** Should `tasks` also collect `- [ ]`
    items from markdown outside `.gnotes/wiki`, such as `TODO.md`?
 3. **Assignees without accounts.** With the developer and agents as writers,

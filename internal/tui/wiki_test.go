@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -623,6 +624,9 @@ func TestWikiPollPicksUpOutsideEdits(t *testing.T) {
 }
 
 func TestWikiExternalEditorWritesAndKeepsAConflictingEdit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in editor is a /bin/sh script")
+	}
 	f := newWikiFixture(t)
 	f.m.focus = focusContent
 	script := filepath.Join(t.TempDir(), "ed.sh")

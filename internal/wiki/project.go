@@ -48,7 +48,19 @@ type Project struct {
 	// File links resolve within it.
 	Repo string
 
+	// User marks the user wiki, ~/.gwiki, which only User opens.
+	User bool
+
 	Config Config
+}
+
+// Label names the wiki where the interface and the browser view show it:
+// "user" for the user wiki, whatever its config says, else the project's name.
+func (p *Project) Label() string {
+	if p.User {
+		return "user"
+	}
+	return p.Config.Name
 }
 
 // PagesPath returns the absolute pages directory.
@@ -57,22 +69,28 @@ func (p *Project) PagesPath() string { return filepath.Join(p.Root, DirName, Pag
 // Cache returns the absolute cache path.
 func (p *Project) Cache() string { return filepath.Join(p.Root, DirName, CacheFile) }
 
-// Discover walks up from dir to the nearest directory holding .gwiki/wiki.
+// Discover walks up from dir to the nearest directory holding .gwiki/wiki. It
+// stops at the repository root, the first directory holding .git, and never
+// takes the home directory for a project: its .gwiki is the user wiki, which
+// only User opens.
 func Discover(dir string) (*Project, error) {
 	dir, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, err
 	}
+	home, _ := os.UserHomeDir()
 	old := ""
 	for {
-		if info, err := os.Stat(filepath.Join(dir, DirName, PagesDir)); err == nil && info.IsDir() {
-			return load(dir)
-		}
-		if info, err := os.Stat(filepath.Join(dir, oldDirName, PagesDir)); err == nil && info.IsDir() && old == "" {
-			old = dir
+		if dir != home {
+			if isDir(filepath.Join(dir, DirName, PagesDir)) {
+				return load(dir, dir)
+			}
+			if isDir(filepath.Join(dir, oldDirName, PagesDir)) && old == "" {
+				old = dir
+			}
 		}
 		parent := filepath.Dir(dir)
-		if parent == dir {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil || parent == dir {
 			if old != "" {
 				return nil, fmt.Errorf("%w; %s has %s from before the rename to gwiki: rename it to %s, then run 'gwiki check' for links that name %s", ErrNotFound, old, oldDirName, DirName, oldDirName)
 			}
@@ -80,6 +98,45 @@ func Discover(dir string) (*Project, error) {
 		}
 		dir = parent
 	}
+}
+
+// ErrNoUserWiki reports that ~/.gwiki holds no wiki.
+var ErrNoUserWiki = errors.New("no user wiki; run 'gwiki -u init'")
+
+// User locates the user wiki, ~/.gwiki. Its repository is found from ~/.gwiki
+// upward, so ~/.gwiki/.git or a repository at ~ serves; with neither, file
+// links stay within ~/.gwiki rather than reaching the whole home directory.
+func User() (*Project, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	if !isDir(filepath.Join(home, DirName, PagesDir)) {
+		return nil, ErrNoUserWiki
+	}
+	p, err := load(home, filepath.Join(home, DirName))
+	if err != nil {
+		return nil, err
+	}
+	p.User = true
+	return p, nil
+}
+
+// InitUser creates the user wiki, or completes a partial one.
+func InitUser() (*Project, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := Init(home); err != nil {
+		return nil, err
+	}
+	return User()
+}
+
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 // Init creates a wiki in dir, or completes a partial one. It keeps an existing
@@ -127,11 +184,13 @@ func Init(dir string) (*Project, error) {
 			return nil, fmt.Errorf("write %s: %w", ignore, err)
 		}
 	}
-	return load(dir)
+	return load(dir, dir)
 }
 
-func load(root string) (*Project, error) {
-	p := &Project{Root: root, Repo: root}
+// load reads the project at root. Its repository is the first directory
+// holding .git from repoFrom upward, else repoFrom.
+func load(root, repoFrom string) (*Project, error) {
+	p := &Project{Root: root, Repo: repoFrom}
 	raw, err := os.ReadFile(filepath.Join(root, DirName, configFile))
 	switch {
 	case err == nil:
@@ -144,7 +203,7 @@ func load(root string) (*Project, error) {
 	if p.Config.Name == "" {
 		p.Config.Name = filepath.Base(root)
 	}
-	for dir := root; ; {
+	for dir := repoFrom; ; {
 		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
 			p.Repo = dir
 			break

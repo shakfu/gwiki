@@ -135,7 +135,7 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 	// The name comes with the list so that a page opened directly, without
 	// the overview, still has it for the header; stale, so that every view
 	// shows a failed refresh.
-	writeJSON(w, map[string]any{"name": s.w.Config.Name, "pages": pages, "stale": s.stale})
+	writeJSON(w, map[string]any{"name": s.w.Label(), "pages": pages, "stale": s.stale})
 }
 
 // page is one page with everything the browser draws.

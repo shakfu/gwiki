@@ -67,7 +67,7 @@ display. The address is printed either way, and --open forces the attempt.
 				return err
 			}
 			url := srv.URL(ln.Addr().String())
-			a.printf("%s  %s\n", a.style(ansiBold, "gwiki"), w.Config.Name)
+			a.printf("%s  %s\n", a.style(ansiBold, "gwiki"), w.Label())
 			a.printf("%s\n", url)
 			if tcp, ok := ln.Addr().(*net.TCPAddr); ok && !tcp.IP.IsLoopback() {
 				a.printf("%s\n", a.style(ansiRed, "warning: listening beyond this machine over plain HTTP; anyone who sees the address can read and change these pages"))
