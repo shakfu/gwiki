@@ -115,7 +115,12 @@ func TestWikiCreateReadEditAndWrite(t *testing.T) {
 	if text, isError := f.call("gwiki_write", map[string]any{"page": "lexer/parser-notes", "base": "", "content": "# Mine\n"}); !isError || !strings.Contains(text, "gwiki_create") {
 		t.Fatalf("write without a base = %v\n%s", isError, text)
 	}
-	out = f.mustCall("gwiki_write", map[string]any{"page": "lexer/parser-notes", "base": wiki.Hash([]byte(edited)), "content": "# Mine\n"})
+	// The content is written as the browser view writes it: \n, final newline.
+	out = f.mustCall("gwiki_write", map[string]any{"page": "lexer/parser-notes", "base": wiki.Hash([]byte(edited)), "content": "# Mine\r\n\r\nText."})
+	if got := f.source("lexer/parser-notes"); got != "# Mine\n\nText.\n" || hashIn(t, out) != wiki.Hash([]byte(got)) {
+		t.Fatalf("write with CRLF: %q\n%s", got, out)
+	}
+	out = f.mustCall("gwiki_write", map[string]any{"page": "lexer/parser-notes", "base": hashIn(t, out), "content": "# Mine\n"})
 	if f.source("lexer/parser-notes") != "# Mine\n" || hashIn(t, out) != wiki.Hash([]byte("# Mine\n")) {
 		t.Fatalf("write: %s", out)
 	}

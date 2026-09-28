@@ -2,11 +2,13 @@ package markdown
 
 import (
 	"bytes"
+	"strconv"
 	"strings"
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
+	extast "github.com/yuin/goldmark/extension/ast"
 	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/renderer"
 	"github.com/yuin/goldmark/renderer/html"
@@ -103,13 +105,37 @@ func (t *linkTransformer) rewrite(n ast.Node, dest []byte, label string, image b
 	}
 }
 
-// wikiRenderer draws [[wiki]] links as anchors.
+// wikiRenderer draws [[wiki]] links as anchors, and checkboxes marked with
+// their source line.
 type wikiRenderer struct {
 	resolve func(Link) Target
+	lines   []int
 }
 
 func (r *wikiRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
 	reg.Register(KindWikiLink, r.render)
+	reg.Register(extast.KindTaskCheckBox, r.renderCheckBox)
+}
+
+// renderCheckBox adds data-line, which the browser view matches to a task.
+// goldmark draws boxes that Parse does not list as tasks, such as one in a
+// blockquote, so matching by position ticks the wrong item.
+func (r *wikiRenderer) renderCheckBox(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
+	if !entering {
+		return ast.WalkContinue, nil
+	}
+	w.WriteString(`<input`)
+	if node.(*extast.TaskCheckBox).IsChecked {
+		w.WriteString(` checked=""`)
+	}
+	if block, ok := node.Parent().(interface{ Lines() *text.Segments }); ok && block.Lines().Len() > 0 {
+		if r.lines == nil {
+			r.lines = lineStarts(source)
+		}
+		w.WriteString(` data-line="` + strconv.Itoa(lineOf(r.lines, block.Lines().At(0).Start)) + `"`)
+	}
+	w.WriteString(` disabled="" type="checkbox"> `)
+	return ast.WalkContinue, nil
 }
 
 func (r *wikiRenderer) render(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {

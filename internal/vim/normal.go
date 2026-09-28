@@ -1,6 +1,7 @@
 package vim
 
 import (
+	"slices"
 	"strings"
 	"unicode"
 )
@@ -12,6 +13,7 @@ const (
 	done result = iota
 	needMore
 	bad
+	empty // an exclusive motion that did not move: the operator covers nothing
 )
 
 // changeCommands begin a change, so "." can repeat them.
@@ -26,6 +28,9 @@ var changeCommands = map[string]bool{
 func (e *Editor) normalKey(k string) {
 	if k == "esc" || k == "ctrl+[" {
 		e.pending = nil
+		if !e.replaying {
+			e.changing = false // an abandoned change is not repeated
+		}
 		if e.Mode == Visual || e.Mode == VisualLine {
 			e.Mode = Normal
 		}
@@ -36,7 +41,9 @@ func (e *Editor) normalKey(k string) {
 	e.pending = append(e.pending, k)
 	if r := e.parse(); r != needMore {
 		if e.changing && e.Mode != Insert && e.Mode != Replace && !e.replaying {
-			e.lastChange = e.seq
+			if r == done {
+				e.lastChange = e.seq
+			}
 			e.changing = false
 		}
 		e.pending = nil
@@ -115,6 +122,9 @@ func (e *Editor) run(keys []string, count int, reg rune) result {
 	case "d", "c", "y", ">", "<", "gu", "gU", "g~":
 		if visual {
 			a, z, _ := e.Selection()
+			if e.changing && !e.replaying {
+				e.seq = append(e.reselect(a, z), e.pending...)
+			}
 			e.applyOperator(head, a, z, e.Mode == VisualLine, reg)
 			return done
 		}
@@ -129,6 +139,13 @@ func (e *Editor) run(keys []string, count int, reg rune) result {
 			return done
 		}
 		a, z, linewise, r := e.opRange(head, rest, atLeast(count))
+		if r == empty {
+			if head == "c" {
+				e.holding = true
+				e.startInsert(Insert)
+			}
+			return done
+		}
 		if r != done {
 			return r
 		}
@@ -232,11 +249,16 @@ func (e *Editor) run(keys []string, count int, reg rune) result {
 		}
 		keys := e.lastChange
 		if count > 0 {
-			// A count on "." replaces the one the change was made with.
-			for len(keys) > 0 && len(keys[0]) == 1 && keys[0][0] >= '1' && keys[0][0] <= '9' {
-				keys = keys[1:]
+			// A count on "." replaces the one the change was made with. It
+			// goes after a register, which parse reads first.
+			var prefix []string
+			if len(keys) >= 2 && keys[0] == `"` {
+				prefix, keys = keys[:2], keys[2:]
 			}
-			keys = append(strings.Split(itoa(count), ""), keys...)
+			if _, i := readCount(keys, 0); i > 0 {
+				keys = keys[i:]
+			}
+			keys = slices.Concat(prefix, strings.Split(itoa(count), ""), keys)
 		}
 		e.replaying = true
 		e.pending = nil
@@ -429,6 +451,8 @@ func (e *Editor) applyOperator(op string, a, z Pos, linewise bool, reg rune) {
 		e.setMessage(count(strings.Count(text, "\n"), "line") + " yanked")
 	case "d", "c":
 		e.yank(reg, text, linewise)
+		// The deletion and the insertion after c are one undo step.
+		e.holding = op == "c"
 		e.change(func() {
 			if linewise && op == "d" {
 				// The newline goes with the lines, unless they are the last.
@@ -443,7 +467,6 @@ func (e *Editor) applyOperator(op string, a, z Pos, linewise bool, reg rune) {
 		})
 		if op == "c" {
 			e.Mode = Normal
-			e.holding = true
 			e.startInsert(Insert)
 		} else if e.Mode == Visual || e.Mode == VisualLine {
 			e.Mode = Normal
@@ -627,4 +650,30 @@ func (e *Editor) toggleCase(n int) {
 		e.Buf.Replace(e.Cursor, at, mapCase("g~", string(line[e.Cursor.Col:end])))
 		e.Cursor = e.Buf.clamp(at, false)
 	})
+}
+
+// reselect is the keys that select, from the cursor, a region the size of the
+// visual selection a to z, so "." repeats a visual operator as vim does: the
+// same number of lines, and on one line the same number of characters.
+func (e *Editor) reselect(a, z Pos) []string {
+	mode := "v"
+	if e.Mode == VisualLine {
+		mode = "V"
+	}
+	keys := []string{mode}
+	if n := z.Line - a.Line; n > 0 {
+		keys = append(keys, strings.Split(itoa(n), "")...)
+		keys = append(keys, "j")
+		if mode == "v" {
+			keys = append(keys, "0")
+			if z.Col > 0 {
+				keys = append(keys, strings.Split(itoa(z.Col), "")...)
+				keys = append(keys, "l")
+			}
+		}
+	} else if n := z.Col - a.Col; n > 0 && mode == "v" {
+		keys = append(keys, strings.Split(itoa(n), "")...)
+		keys = append(keys, "l")
+	}
+	return keys
 }

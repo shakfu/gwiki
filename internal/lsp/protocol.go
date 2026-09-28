@@ -123,6 +123,16 @@ func uriPath(uri string) (string, bool) {
 	return filepath.FromSlash(u.Path), true
 }
 
+// docKey is the key an open document is stored under: its URI as fileURI
+// spells it. Clients escape characters such as "+", "(" and "@" that Go
+// leaves as they are, so the client's spelling misses lookups by page.
+func docKey(uri string) string {
+	if path, ok := uriPath(uri); ok {
+		return fileURI(path)
+	}
+	return uri
+}
+
 // ---------------------------------------------------------------- text
 
 // text is a document with line offsets, converting between byte offsets and

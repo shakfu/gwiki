@@ -2,11 +2,13 @@ package wiki
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // schemaVersion is PRAGMA user_version. Any other value, or a file SQLite
@@ -14,7 +16,8 @@ import (
 // 4: a directory's README is titled, found and linked by the directory.
 // 5: a checklist item's text no longer holds its due: date.
 // 6: skipped lists the files a refresh left out.
-const schemaVersion = 6
+// 7: files.ctime, so an edit with its mtime restored is re-indexed.
+const schemaVersion = 7
 
 const schema = `
 CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
@@ -23,6 +26,7 @@ CREATE TABLE files (
 	path  TEXT PRIMARY KEY,
 	size  INTEGER NOT NULL,
 	mtime INTEGER NOT NULL,
+	ctime INTEGER NOT NULL,
 	hash  TEXT NOT NULL
 );
 
@@ -115,6 +119,12 @@ type Wiki struct {
 func Open(p *Project) (*Wiki, error) {
 	w := &Wiki{Project: p}
 	if err := w.connect(); err != nil {
+		// Another process holding the lock is not a broken cache, and it
+		// keeps writing to the file after an unlink.
+		if busy(err) {
+			w.Close()
+			return nil, err
+		}
 		// Unreadable or from another schema: start again, once.
 		w.discard()
 		if err := w.connect(); err != nil {
@@ -146,6 +156,20 @@ func (w *Wiki) Rebuild() error {
 	return err
 }
 
+// busyTimeout is how long, in milliseconds, a connection waits for another
+// process's lock.
+var busyTimeout = 5000
+
+// busy reports whether err is SQLite's "locked by another connection".
+func busy(err error) bool {
+	var e *sqlite.Error
+	if !errors.As(err, &e) {
+		return false
+	}
+	code := e.Code() & 0xff // the primary code, without the extended bits
+	return code == sqlite3.SQLITE_BUSY || code == sqlite3.SQLITE_LOCKED
+}
+
 func (w *Wiki) discard() {
 	w.Close()
 	w.db = nil
@@ -157,7 +181,7 @@ func (w *Wiki) discard() {
 func (w *Wiki) connect() error {
 	q := url.Values{}
 	q.Set("_txlock", "immediate")
-	q.Add("_pragma", "busy_timeout(5000)")
+	q.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", busyTimeout))
 	q.Add("_pragma", "journal_mode(WAL)")
 	q.Add("_pragma", "synchronous(NORMAL)")
 	dsn := (&url.URL{Scheme: "file", OmitHost: true, Path: w.Cache(), RawQuery: q.Encode()}).String()

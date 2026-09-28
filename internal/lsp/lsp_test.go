@@ -35,8 +35,12 @@ var pages = map[string]string{
 
 func newRepo(t *testing.T) string {
 	t.Helper()
-	root := t.TempDir()
-	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+	return newRepoAt(t, t.TempDir())
+}
+
+func newRepoAt(t *testing.T, root string) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := wiki.Init(root); err != nil {
@@ -604,6 +608,15 @@ func TestSymbols(t *testing.T) {
 	if len(syms) != 2 || syms[0].Name != "A" || len(syms[0].Children) != 2 || syms[0].Children[1].Name != "C" || syms[1].Name != "D" || syms[0].Range.End.Line != 7 {
 		t.Fatalf("symbols = %+v", syms)
 	}
+	// A heading being typed has no text yet; it is left out, not sent as line -1.
+	c.change(uri, "#\n\ntext\n\n## B\n", 2)
+	c.diagnostics(uri)
+	syms = nil
+	c.mustCall("textDocument/documentSymbol", map[string]any{"textDocument": map[string]any{"uri": uri}}, &syms)
+	if len(syms) != 1 || syms[0].Name != "B" || syms[0].Range.Start.Line != 4 {
+		t.Fatalf("symbols with an empty heading = %+v", syms)
+	}
+
 	var found []struct {
 		Name     string   `json:"name"`
 		Location Location `json:"location"`
@@ -709,6 +722,26 @@ func TestRename(t *testing.T) {
 	params["newName"] = "archive/"
 	if err := c2.call("textDocument/rename", params, nil); err == nil || !strings.Contains(err.Message, "gwiki mv") {
 		t.Fatalf("rename without file operations = %v", err)
+	}
+}
+
+// A client that escapes "+", "(" and ")", as VS Code does, names the same open
+// buffer the server looks up by page, so the unsaved-changes guard holds.
+func TestRenameSeesABufferOpenedUnderAnotherURISpelling(t *testing.T) {
+	c := start(t, newRepoAt(t, filepath.Join(t.TempDir(), "c++ (proj)")))
+	c.initialize(fullCapabilities)
+	index := strings.NewReplacer("+", "%2B", "(", "%28", ")", "%29").Replace(c.pageURI("index"))
+	if index == c.pageURI("index") {
+		t.Fatal("the test URI is spelled as the server spells it")
+	}
+	c.open(index, pages["index"]+"\nunsaved\n")
+	c.diagnostics(index)
+
+	p := posOf(t, pages["index"], "Design sketch#Tokens", 2)
+	params := at(index, p.Line, p.Character)
+	params["newName"] = "archive/"
+	if err := c.call("textDocument/rename", params, nil); err == nil || !strings.Contains(err.Message, "unsaved changes") {
+		t.Fatalf("rename over unsaved changes = %v", err)
 	}
 }
 

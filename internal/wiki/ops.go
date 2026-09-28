@@ -177,6 +177,16 @@ func (w *Wiki) info(id string) (PageInfo, error) {
 	return found[0], nil
 }
 
+// NormalText is page text as gwiki writes it: \n line breaks and a final
+// newline. The browser view and MCP apply it to a whole-page write.
+func NormalText(s string) []byte {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	if !strings.HasSuffix(s, "\n") {
+		s += "\n"
+	}
+	return []byte(s)
+}
+
 // Write replaces a page's whole source, given the hash of the source the
 // caller read.
 func (w *Wiki) Write(page string, src []byte, base string) (Warnings, error) {
@@ -434,8 +444,8 @@ func (w *Wiki) SetTaskStatus(t Task, status string) (Warnings, error) {
 	if status == "done" {
 		box = 'x'
 	}
-	if t.Box <= 0 || t.Box >= len(src) || !strings.ContainsRune(" xX", rune(src[t.Box])) {
-		return Warnings{}, &ErrConflict{Page: t.Page, Current: src, CurrentHash: hash}
+	if err := w.checkItem(t, src, hash); err != nil {
+		return Warnings{}, err
 	}
 	if (src[t.Box] == ' ') == (box == ' ') {
 		return Warnings{}, nil
@@ -443,6 +453,18 @@ func (w *Wiki) SetTaskStatus(t Task, status string) (Warnings, error) {
 	out := bytes.Clone(src)
 	out[t.Box] = box
 	return w.Write(t.Page, out, hash)
+}
+
+// checkItem refuses a checklist item whose box no longer holds its text in
+// src, which readIndexed has matched to the cache. A Task held across a
+// refresh can point at another item or past the end of the page.
+func (w *Wiki) checkItem(t Task, src []byte, hash string) error {
+	var text string
+	err := w.db.QueryRow(`SELECT text FROM checklist WHERE page = ? AND box = ?`, t.Page, t.Box).Scan(&text)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && text != t.Text {
+		return &ErrConflict{Page: t.Page, Current: src, CurrentHash: hash}
+	}
+	return err
 }
 
 var dueWord = regexp.MustCompile(`\s*\bdue:(\d{4}-\d{2}-\d{2})\b`)
@@ -457,14 +479,14 @@ func (w *Wiki) Promote(t Task, dir string) (PageInfo, Warnings, error) {
 	if err != nil {
 		return PageInfo{}, Warnings{}, err
 	}
+	if err := w.checkItem(t, src, hash); err != nil {
+		return PageInfo{}, Warnings{}, err
+	}
 	lineEnd := bytes.IndexByte(src[t.Box:], '\n')
 	if lineEnd < 0 {
 		lineEnd = len(src)
 	} else {
 		lineEnd += t.Box
-	}
-	if t.Box < 1 || src[t.Box-1] != '[' || t.Box+1 >= len(src) || src[t.Box+1] != ']' {
-		return PageInfo{}, Warnings{}, &ErrConflict{Page: t.Page, Current: src, CurrentHash: hash}
 	}
 	text := strings.TrimSpace(string(src[t.Box+2 : lineEnd]))
 	title := strings.TrimSpace(dueWord.ReplaceAllString(text, ""))

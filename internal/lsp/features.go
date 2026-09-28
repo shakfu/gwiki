@@ -8,6 +8,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -265,7 +266,9 @@ func (s *Server) documentSymbol(raw json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	heads := markdown.Parse(d.text.src).Headings
+	// A heading with no text, as while one is being typed, has no name and no
+	// recorded line; the protocol requires both.
+	heads := slices.DeleteFunc(markdown.Parse(d.text.src).Headings, func(h markdown.Heading) bool { return h.Line == 0 })
 	lastLine := len(d.text.lines) - 1
 
 	// Each heading's section runs to the next heading at its level or above.

@@ -24,53 +24,53 @@ IDs refer to `REVIEW.md` (commit `2cdc3d9`, 2026-09-27), which holds the evidenc
 
 - [x] P1. goldmark v1.7.16 has a reachable XSS (GO-2026-5320); update to v1.7.17 or later. `go.mod`
 
-- [ ] W4. `Promote` slices before it checks bounds; a stale `Task` panics. `internal/wiki/ops.go:443,449`
+- [x] W4. `Promote` slices before it checks bounds; a stale `Task` panics. `internal/wiki/ops.go:443,449`
 
-- [ ] W5. `SetTaskStatus` trusts `Task.Box` alone; a stale task ticks the wrong item. `internal/wiki/ops.go:420-428`
+- [x] W5. `SetTaskStatus` trusts `Task.Box` alone; a stale task ticks the wrong item. `internal/wiki/ops.go:420-428`
 
-- [ ] W6. A move does not rewrite a page's wiki links to itself; `--dry-run` does not report it. `internal/wiki/move.go:110,154`
+- [x] W6. A move does not rewrite a page's wiki links to itself; `--dry-run` does not report it. `internal/wiki/move.go:110,154`
 
-- [ ] W7. A move of an untitled page breaks `[[title]]` links. `internal/wiki/move.go:85-86`
+- [x] W7. A move of an untitled page breaks `[[title]]` links. `internal/wiki/move.go:85-86`
 
-- [ ] W8. `SetBody`, `Remove`, `Tag`, `SetTaskStatus` (task page) and `Fix` take no base hash; the README now says so. `internal/wiki/ops.go:235-325,402-410`, `internal/wiki/fix.go:202-215`
+- [x] W8. `SetBody`, `Remove`, `Tag`, `SetTaskStatus` (task page) and `Fix` take no base hash; the README now says so. Closed as documented: no caller holds an earlier read to pass as a base. Any future MCP delete or body-replace tool must take a `base`; see `docs/dev/mcp-base.md`. `internal/wiki/ops.go:235-325,402-410`, `internal/wiki/fix.go:202-215`
 
-- [ ] W9. `Open` deletes the cache on any connect error, including lock timeout. `internal/wiki/cache.go:113-118`
+- [x] W9. `Open` deletes the cache on any connect error, including lock timeout. `internal/wiki/cache.go:113-118`
 
-- [ ] W10. The write check does not cover writers outside gwiki; re-check before each rename. `internal/wiki/write.go:88-112`
+- [x] W10. The write check does not cover writers outside gwiki; re-check before each rename. `internal/wiki/write.go:88-112`
 
-- [ ] W11. Change detection uses size and mtime only; `rsync -t`/`tar` edits are never re-indexed. `internal/wiki/refresh.go:86`
+- [x] W11. Change detection uses size and mtime only; `rsync -t`/`tar` edits are never re-indexed. `internal/wiki/refresh.go:86`
 
-- [ ] S2. The browser view matches checkboxes to tasks by index; a blockquoted task shifts them. `internal/webwiki/assets/app.js:286-291`
+- [x] S2. The browser view matches checkboxes to tasks by index; a blockquoted task shifts them. `internal/webwiki/assets/app.js:286-291`
 
-- [ ] S3. The language server keys buffers by the client's URI string; unsaved-changes guard on rename misses. `internal/lsp/server.go:350`, `features.go:146,610`
+- [x] S3. The language server keys buffers by the client's URI string; unsaved-changes guard on rename misses. `internal/lsp/server.go:350`, `features.go:146,610`
 
 - [x] S4. `javascript:`, `data:`, `vbscript:` targets reach the page via autolinks and `href`. Allowlist `http`, `https`, `mailto`. `internal/webwiki/api.go:221-222`, `app.js:322`
 
-- [ ] S5. The web view and MCP apply different rules to the same write (line endings, task text check, empty base). `internal/webwiki/api.go`, `internal/mcp/wiki.go`
+- [x] S5. The web view and MCP apply different rules to the same write (line endings, task text check, empty base). `internal/webwiki/api.go`, `internal/mcp/wiki.go`
 
-- [ ] S6. `documentSymbol` returns line -1 and an empty name for an empty heading. `internal/lsp/features.go:287-290`
+- [x] S6. `documentSymbol` returns line -1 and an empty name for an empty heading. `internal/lsp/features.go:287-290`
 
 - [x] T4. `ctrl-c` and `q` quit with unsaved changes. `internal/tui/wiki.go:542-545`, `internal/tui/keys.go:73`
 
 - [x] T5. `gwiki edit` discards the edited text on a conflict. `internal/cli/wiki.go:704-718`, `internal/cli/commands.go:126,135`
 
-- [ ] T6. `ctrl-o` in insert mode breaks undo. `internal/vim/editor.go:296-301`
+- [x] T6. `ctrl-o` in insert mode breaks undo. `internal/vim/editor.go:296-301`
 
-- [ ] T7. Completion bypasses the undo log and the draft hook. `internal/tui/wiki_edit.go:336-344`
+- [x] T7. Completion bypasses the undo log and the draft hook. `internal/tui/wiki_edit.go:336-344`
 
-- [ ] T8. The CLI prints escape sequences from page content in `links`, `show`, `check`, `tasks`. `internal/cli/format.go:85-88`
+- [x] T8. The CLI prints escape sequences from page content in `links`, `show`, `check`, `tasks`. `internal/cli/format.go:85-88`
 
-- [ ] T9. The preview prints a raw `due` value. `internal/tui/wiki_view.go:322-323`, `wiki_lists.go:199-212`
+- [x] T9. The preview prints a raw `due` value. `internal/tui/wiki_view.go:322-323`, `wiki_lists.go:199-212`
 
-- [ ] T10. An exclusive motion with an empty range deletes one character (`d0`, `dh`, `db` at column 0). `internal/vim/motion.go:201-214`
+- [x] T10. An exclusive motion with an empty range deletes one character (`d0`, `dh`, `db` at column 0). `internal/vim/motion.go:201-214`
 
-- [ ] T11. `.` records keys that changed nothing; visual-mode operators repeat as nothing. `internal/vim/normal.go:38-41,105-107,226-231`
+- [x] T11. `.` records keys that changed nothing; visual-mode operators repeat as nothing. `internal/vim/normal.go:38-41,105-107,226-231`
 
-- [ ] T12. `c` takes two undo steps. `internal/vim/normal.go:424-440`
+- [x] T12. `c` takes two undo steps. `internal/vim/normal.go:424-440`
 
-- [ ] T13. A pasted `\r` is saved literally; a one-rune paste is dropped. `internal/tui/wiki_edit.go:353,421-427`
+- [x] T13. A pasted `\r` is saved literally; a one-rune paste is dropped. `internal/tui/wiki_edit.go:353,421-427`
 
-- [ ] T14. The buffer wraps by rune count, not by column (CJK, tabs). `internal/vim/motion.go:586-607`
+- [x] T14. The buffer wraps by rune count, not by column (CJK, tabs). `internal/vim/motion.go:586-607`
 
 ## Low
 
@@ -108,7 +108,7 @@ IDs refer to `REVIEW.md` (commit `2cdc3d9`, 2026-09-27), which holds the evidenc
 
 - [ ] S10. Web server sets only `ReadHeaderTimeout`; no `IdleTimeout`, no graceful shutdown. `webwiki/server.go:205`
 
-- [ ] S11. `/api/file` serves any repository file under 1 MB, including `.env`, `.git/config`, `.gwiki/cache.db`. `webwiki/api.go:289-317`
+- [x] S11. `/api/file` serves any repository file under 1 MB, including `.env`, `.git/config`, `.gwiki/cache.db`. `webwiki/api.go:289-317`
 
 - [ ] S12. Web errors return absolute paths. `webwiki/api.go:303`
 
@@ -128,11 +128,11 @@ IDs refer to `REVIEW.md` (commit `2cdc3d9`, 2026-09-27), which holds the evidenc
 
 - [ ] T18. `r<tab>` writes `t`; `f<tab>` searches for `t`; `3r<enter>` writes 3 newlines. `vim/normal.go:561-568`
 
-- [ ] T19. On `- [x] done [ ] other`, the toggle changes the second box. `vim/editor.go:479`
+- [x] T19. On `- [x] done [ ] other`, the toggle changes the second box. `vim/editor.go:479`
 
-- [ ] T20. The draft write is not atomic. (Its errors are now reported and retried.) `tui/wiki_edit.go:132-136`
+- [x] T20. The draft write is not atomic. (Its errors are now reported and retried.) `tui/wiki_edit.go:132-136`
 
-- [ ] T21. A restored stale draft takes the current hash, so `:w` overwrites the newer page. `tui/wiki_edit.go:108-109`
+- [x] T21. A restored stale draft takes the current hash, so `:w` overwrites the newer page. `tui/wiki_edit.go:108-109`
 
 - [ ] T22. `gwiki tag other --json` adds the tag `--json`. `cli/wiki.go:862-875`
 
@@ -141,6 +141,10 @@ IDs refer to `REVIEW.md` (commit `2cdc3d9`, 2026-09-27), which holds the evidenc
 - [ ] T24. `Refresh` and the draft write run inside `Update` each second. `tui/wiki.go:492-494`
 
 - [ ] T25. Bidirectional overrides (U+202E) and zero-width characters pass the display filter. `display/display.go:30`
+
+- [x] T26. A paste in normal mode ran as keystrokes, so pasted text ran as commands. Found 2026-09-28, not in `REVIEW.md`. `internal/tui/wiki_edit.go` (`keyContent`)
+
+- [ ] T27. `dj` on the last line deletes it; vim fails and does nothing. `k` on the first line likewise (inferred). Found 2026-09-28, not in `REVIEW.md`. `internal/vim/motion.go` (`opRange`)
 
 ## Design
 

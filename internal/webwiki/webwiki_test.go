@@ -376,6 +376,20 @@ func TestFileView(t *testing.T) {
 			t.Errorf("%s was served", path)
 		}
 	}
+
+	// Hidden files are refused, directly or through a symlink (S11).
+	f.writeFile(filepath.Join(f.root, ".env"), "TOKEN=secret\n")
+	f.writeFile(filepath.Join(f.root, ".git", "config"), "[core]\n")
+	if err := os.Symlink(filepath.Join(f.root, ".env"), filepath.Join(f.root, "src", "env")); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{".env", ".git/config", ".gwiki/cache.db", "src/../.env", "src/env"} {
+		res := f.do("GET", "/api/file?p="+path, nil)
+		res.Body.Close()
+		if res.StatusCode != http.StatusForbidden {
+			t.Errorf("%s: %s, want 403", path, res.Status)
+		}
+	}
 }
 
 func TestSaveNewAndTask(t *testing.T) {
@@ -423,6 +437,18 @@ func TestSaveNewAndTask(t *testing.T) {
 	res4.Body.Close()
 	if res4.StatusCode != http.StatusOK || !strings.Contains(f.source("plan"), "- [x] first") {
 		t.Fatalf("task: %s\n%s", res4.Status, f.source("plan"))
+	}
+
+	// As in MCP: an item's text is required, and a save needs a base.
+	res6 := f.do("POST", "/api/task", map[string]any{"page": "plan", "line": 3, "status": "open"})
+	res6.Body.Close()
+	if res6.StatusCode != http.StatusBadRequest || !strings.Contains(f.source("plan"), "- [x] first") {
+		t.Fatalf("task without text: %s\n%s", res6.Status, f.source("plan"))
+	}
+	res7 := f.do("POST", "/api/save", map[string]any{"page": "unbased", "base": "", "text": "# New\n"})
+	res7.Body.Close()
+	if res7.StatusCode != http.StatusBadRequest {
+		t.Fatalf("save without a base: %s", res7.Status)
 	}
 
 	// A line that now holds another item is refused.

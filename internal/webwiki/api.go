@@ -357,6 +357,12 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 		fail(w, errors.New("that path is outside the repository"), http.StatusBadRequest)
 		return
 	}
+	// Hidden files hold secrets and state: .env, .git/config, .gwiki/cache.db.
+	// A symlink to one counts as one.
+	if hidden(rel) || resolvesHidden(repo, abs) {
+		fail(w, errors.New("hidden files are not shown"), http.StatusForbidden)
+		return
+	}
 	// Read through the repository root, so a symlink cannot lead outside it.
 	root, err := os.OpenRoot(repo)
 	if err != nil {
@@ -380,6 +386,28 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"path": rel, "text": string(raw)})
+}
+
+// hidden reports whether a slash-separated path has a part starting with ".".
+func hidden(rel string) bool {
+	for part := range strings.SplitSeq(rel, "/") {
+		if strings.HasPrefix(part, ".") {
+			return true
+		}
+	}
+	return false
+}
+
+// resolvesHidden reports whether abs, with symlinks followed, is a hidden path
+// in repo. A path that does not resolve is left to the read to report.
+func resolvesHidden(repo, abs string) bool {
+	realRepo, err1 := filepath.EvalSymlinks(repo)
+	real, err2 := filepath.EvalSymlinks(abs)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	rel, err := filepath.Rel(realRepo, real)
+	return err == nil && hidden(filepath.ToSlash(rel))
 }
 
 // ---------------------------------------------------------------- writing
@@ -408,12 +436,13 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, http.StatusBadRequest)
 		return
 	}
-	text := strings.ReplaceAll(in.Text, "\r\n", "\n")
-	if !strings.HasSuffix(text, "\n") {
-		text += "\n"
+	if in.Base == "" {
+		fail(w, errors.New("base is the hash the page was read with; create a page with /api/new"), http.StatusBadRequest)
+		return
 	}
+	text := wiki.NormalText(in.Text)
 	var conflict *wiki.ErrConflict
-	warn, err := s.w.Write(id, []byte(text), in.Base)
+	warn, err := s.w.Write(id, text, in.Base)
 	switch {
 	case errors.As(err, &conflict):
 		writeStatus(w, http.StatusConflict, map[string]any{
@@ -425,7 +454,7 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.bump()
-	writeJSON(w, map[string]string{"hash": wiki.Hash([]byte(text)), "warning": warning(warn)})
+	writeJSON(w, map[string]string{"hash": wiki.Hash(text), "warning": warning(warn)})
 }
 
 // warning is what a write that landed left wrong, or empty.
@@ -490,6 +519,10 @@ func (s *Server) handleTask(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		// The text guards against a line that now holds another item.
+		if t.Line > 0 && in.Text == "" {
+			fail(w, errors.New("send the item's text as the page listed it"), http.StatusBadRequest)
+			return
+		}
 		if in.Text != "" && strings.TrimSpace(in.Text) != t.Text {
 			fail(w, errors.New("that line now holds "+strconv.Quote(t.Text)+"; reload the page"), http.StatusConflict)
 			return

@@ -997,6 +997,66 @@ func TestWikiEditorDraftsAndConflicts(t *testing.T) {
 	}
 }
 
+// A draft restored over a page changed since is a conflict at :w (T21).
+func TestWikiStaleDraftConflictsOnSave(t *testing.T) {
+	f := newWikiFixture(t)
+	f.m.focus = focusContent
+	f.press("o")
+	f.typing("draft text")
+	f.press("esc")
+	f.m.Update(pollMsg{})
+
+	newer := "# Home\n\nSaved elsewhere after the draft.\n"
+	f.write("index", newer)
+	if err := f.m.load("index"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(f.view(), "has changed since") {
+		t.Fatalf("no stale-draft offer:\n%s", f.view())
+	}
+	f.typing("y")
+	f.press("enter")
+	f.press(":")
+	f.typing("w")
+	f.press("enter")
+	if got := f.source("index"); got != newer {
+		t.Fatalf(":w overwrote the newer page with a stale draft:\n%s", got)
+	}
+	if !strings.Contains(f.view(), ":w! overwrites") {
+		t.Fatalf("conflict message:\n%s", f.view())
+	}
+}
+
+// A completion is one undo step and schedules a draft, even when it is the
+// first change of an insertion.
+func TestWikiCompletionIsUndoneAndDrafted(t *testing.T) {
+	f := newWikiFixture(t)
+	f.m.focus = focusContent
+	original := f.m.edit.ed.Text()
+
+	f.press("G", "o")
+	f.typing("see [[desi")
+	f.press("esc")
+	typed := f.m.edit.ed.Text()
+
+	f.m.edit.draftPending = false
+	f.press("A", "ctrl+n")
+	if !strings.Contains(f.m.edit.ed.Text(), "see [[Design sketch") {
+		t.Fatalf("completion:\n%s", f.m.edit.ed.Text())
+	}
+	if !f.m.edit.draftPending {
+		t.Fatal("the completion scheduled no draft")
+	}
+	f.press("esc", "u")
+	if got := f.m.edit.ed.Text(); got != typed {
+		t.Fatalf("u after a completion:\n%q\nwant\n%q", got, typed)
+	}
+	f.press("u")
+	if got := f.m.edit.ed.Text(); got != original {
+		t.Fatalf("second u:\n%q\nwant\n%q", got, original)
+	}
+}
+
 func TestWikiEditorLinksAndCompletion(t *testing.T) {
 	f := newWikiFixture(t)
 	f.m.focus = focusContent
@@ -1120,6 +1180,36 @@ func TestWikiEditorTakesAPaste(t *testing.T) {
 	}
 }
 
+// A bracketed paste of one rune is inserted, and \r line breaks become \n.
+func TestWikiEditorPasteKeepsOneRuneAndNormalisesLineBreaks(t *testing.T) {
+	f := newWikiFixture(t)
+	f.m.focus = focusContent
+	f.press("G", "o")
+	f.m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x"), Paste: true})
+	f.m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("one\rtwo\r\nthree"), Paste: true})
+	f.press("esc")
+	if got := f.m.edit.ed.Text(); !strings.HasSuffix(got, "\n- [ ] xone\ntwo\nthree\n") {
+		t.Fatalf("after the pastes:\n%q", got)
+	}
+}
+
+// A paste in normal mode is inserted at the cursor as one change, not run as
+// commands.
+func TestWikiNormalModePasteIsInsertedNotRun(t *testing.T) {
+	f := newWikiFixture(t)
+	f.m.focus = focusContent
+	before := f.m.edit.ed.Text()
+	f.press("g", "g")
+	f.m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("dd:q!\r"), Paste: true})
+	if got := f.m.edit.ed.Text(); got != "dd:q!\n"+before || f.m.quitting {
+		t.Fatalf("after a normal-mode paste:\n%q", got)
+	}
+	f.press("u")
+	if got := f.m.edit.ed.Text(); got != before {
+		t.Fatalf("u did not undo the paste:\n%q", got)
+	}
+}
+
 // Arrows scroll a page of wrapped lines one step at a time, in the source and
 // in the preview.
 func TestWikiArrowsScrollWrappedPage(t *testing.T) {
@@ -1218,5 +1308,40 @@ func TestQuitKeysQuitACleanBuffer(t *testing.T) {
 		if !f.m.quitting {
 			t.Errorf("%s did not quit", k)
 		}
+	}
+}
+
+// A due date from front matter can hold any text; control characters are not
+// drawn.
+func TestDueCellCleansItsText(t *testing.T) {
+	f := newWikiFixture(t)
+	for _, c := range f.m.dueCell("2026-01-01\x1b]52;c;aGk=\x07", false) {
+		if strings.ContainsAny(c.text, "\x1b\x07") {
+			t.Fatalf("due cell = %q", c.text)
+		}
+	}
+}
+
+// A draft replaces the last one whole, leaving no temporary file (T20).
+func TestReplaceFileLeavesOneWholeFile(t *testing.T) {
+	dir := t.TempDir()
+	name := filepath.Join(dir, "page.draft")
+	for _, text := range []string{"first version, longer\n", "second\n"} {
+		if err := replaceFile(name, []byte(text)); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := os.ReadFile(name); string(got) != text {
+			t.Fatalf("draft = %q, want %q", got, text)
+		}
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+		t.Fatalf("directory holds %d files, want 1", len(entries))
+	}
+	// A write that cannot rename leaves nothing behind.
+	if err := replaceFile(filepath.Join(dir, "missing", "x"), []byte("x")); err == nil {
+		t.Fatal("a write into a missing directory succeeded")
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+		t.Fatalf("a failed write left %d files", len(entries))
 	}
 }

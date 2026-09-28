@@ -192,6 +192,22 @@ func TestWikiDoesNotPrintControlCharacters(t *testing.T) {
 	}
 }
 
+// Link text and task text reach tables unstyled; they are cleaned too.
+func TestWikiDoesNotPrintControlCharactersFromLinksOrTasks(t *testing.T) {
+	f := wikiFixture(t)
+	evil := "\x1b]52;c;aGk=\x07"
+	path := filepath.Join(f.dir, ".gwiki", "wiki", "evil-body.md")
+	if err := os.WriteFile(path, []byte("# Body\n\n[[Nowhere"+evil+"]]\n\n- [ ] do"+evil+" it\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"links", "evil-body"}, {"show", "evil-body"}, {"check"}, {"tasks"}} {
+		out, errOut, _ := f.run(args...)
+		if bytes.ContainsAny([]byte(out+errOut), "\x1b\x07") {
+			t.Errorf("gwiki %s printed a control character: %q", strings.Join(args, " "), out+errOut)
+		}
+	}
+}
+
 func TestWikiNewEditAndTag(t *testing.T) {
 	f := wikiFixture(t)
 

@@ -6,6 +6,60 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Fro
 
 ## [Unreleased]
 
+### Security
+
+**The browser view's source-file panel no longer serves hidden files.** `/api/file` served any repository file under 1 MB, including `.env`, `.git/config` and `.gwiki/cache.db`. A path with a part starting with `.` is now refused, directly or through a symlink. Refusing dot-paths rather than serving only tracked or linked files: one check, no git call, and it covers untracked secrets. A line anchor into a dotfile, such as `.github/workflows/ci.yml#L3`, no longer shows its source.
+
+### Changed
+
+**The browser view and MCP apply one set of rules to a whole-page write.** Both write `\n` line breaks and a final newline; MCP `gwiki_write` wrote its content as given. Both refuse a save without a base hash; the browser view created the page. Both require a checklist item's text to tick it; the browser view without the text ticked whatever was on that line. The browser's own page always sends both.
+
+**Change detection also compares each page's inode change time.** An edit that keeps the size and restores the mtime, as `rsync -t` and `tar` do, was never re-indexed. The cache schema is now 7, so the cache is rebuilt on first use. On a platform without an inode change time, size and mtime are compared as before.
+
+### Fixed
+
+**Ticking or promoting a checklist item could change another item, or panic.** A `Task` held across a refresh kept its byte offset. After items were reordered it ticked whichever item now sat there; after the page shrank, `Promote` sliced past the end. Both now check that the offset still holds the task's text, and return a conflict if not. The terminal interface had no such check; the browser view and MCP each had their own.
+
+**The browser view ticked the wrong item after a blockquoted task.** It matched checkboxes to tasks by position, and goldmark draws boxes the wiki does not list as tasks. Each box now carries its source line, and a box with no task on that line stays disabled.
+
+**A completion in the terminal editor was not recorded for undo, and scheduled no draft.** A later `u` restored text at the wrong offset. A completion is now one undo step, or part of the insertion it ends.
+
+**Moving an untitled page broke `[[title]]` links to it.** Its title is its file name, which the move changes, but the plan resolved links against the old title. Such links are now rewritten, and `--dry-run` lists them.
+
+**A move left the page's wiki links to itself broken**, such as `[[old-name#Sec]]` inside `old-name.md`, and `--dry-run` did not list them. They are now rewritten with the page.
+
+**`ctrl-o` in insert mode left the editor in normal mode, with the insertion outside the undo log.** `u` then undid the change before it. `ctrl-o` now ends the insertion as one undo step, runs one normal-mode command, and returns to insert, as in vim.
+
+**A paste in the terminal editor saved `\r` line breaks into the page, and a one-rune paste was dropped.** Terminals send pasted line breaks as `\r`; they are now inserted as `\n`.
+
+**`d0`, `dh` and `db` at the start of a line deleted a character.** An exclusive motion that does not move now covers nothing; `c` with one still enters insert mode, as in vim.
+
+**The language server missed open buffers whose URI the client spelled differently**, as VS Code does for a path holding `+`, `(` or `@`. Its unsaved-changes check on rename did not fire, and the rename's edits were positioned in the saved file. Buffers are now keyed by the server's own spelling of the URI.
+
+**`c` took two undo steps**: `u` after `cwxyz<esc>` left the deletion in place. The deletion and the insertion are now one step.
+
+**`.` repeated the wrong keys.** An operator abandoned with `esc`, or a change that failed, was recorded with the keys after it, so `.` ran motions. A count on `.` after a register, as in `"a2dd` then `3.`, typed the keys into the buffer. A visual-mode operator repeated as nothing; it now repeats over the same number of lines, or of characters on one line, from the cursor, as in vim.
+
+**The outline in the language server failed while a heading was being typed.** `documentSymbol` sent an empty heading with line -1 and no name, which the protocol forbids and a strict client rejects. Such a heading is left out.
+
+**The terminal preview printed a page's front matter `due` as written**, control characters included. It is cleaned as every other field is.
+
+**`gwiki links`, `show`, `check` and `tasks` printed escape sequences from link and task text**, including an OSC 52 clipboard write. Table cells that are not styled are now cleaned like the rest.
+
+**`Open` deleted the cache when another gwiki process held its lock** past the 5 s timeout. The other process kept writing to the unlinked file, so the two used different caches until restart. A busy cache is now reported and left alone.
+
+**A save by an editor outside gwiki during a write could be overwritten.** Every page's hash was checked once, before any file was staged, so for a move the window was the whole batch. Each page is now checked again just before its rename; the window is that one step. A page that changed stops the batch there, as a partial write naming what landed.
+
+**A restored draft could overwrite a newer page.** It took the page's current hash, so `:w` wrote a draft made against an older version over the newer one. It now keeps the hash it was made against: `:w` reports the conflict, and `:w!` overwrites.
+
+**A draft was written in place**, so a crash during the write could leave half of one. It is now written to a temporary file and renamed.
+
+**A paste in normal mode ran as commands.** Pasted `dd` deleted a line. It is now inserted at the cursor as one change, as in vim.
+
+**The checkbox toggle changed the first `[ ]` on the line**, which on `- [x] done [ ] other` is in the text, not the item's box. It now changes the box after the bullet.
+
+**The terminal editor wrapped lines by rune count**, so a line of CJK text or tabs ran past the pane and was cut. Rows are now measured in cells, as they are drawn.
+
 ## [0.4.0]
 
 ### Security

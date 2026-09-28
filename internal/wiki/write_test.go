@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // emptyWiki is a repository with an initialised wiki and no pages.
@@ -227,6 +228,38 @@ func TestTaskEditsRefuseAPageChangedSinceIndexing(t *testing.T) {
 	}
 }
 
+// A Task held across a refresh can point at another item (W5) or past the end
+// of a shortened page (W4).
+func TestTaskEditsRefuseAHeldItemThatMoved(t *testing.T) {
+	w, root := emptyWiki(t)
+	put(t, w, root, map[string]string{"plan": "# Plan\n\n- [ ] alpha\n- [ ] bravo\n"})
+	alpha, err := w.FindTask("alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var conflict *ErrConflict
+	swapped := "# Plan\n\n- [ ] bravo\n- [ ] alpha\n"
+	put(t, w, root, map[string]string{"plan": swapped})
+	if _, err := w.SetTaskStatus(alpha, "done"); !errors.As(err, &conflict) {
+		t.Fatalf("SetTaskStatus on a swapped item = %v, want a conflict", err)
+	}
+	if _, _, err := w.Promote(alpha, "tasks"); !errors.As(err, &conflict) {
+		t.Fatalf("Promote on a swapped item = %v, want a conflict", err)
+	}
+	if got := source(t, root, "plan"); got != swapped {
+		t.Fatalf("plan was written:\n%s", got)
+	}
+
+	put(t, w, root, map[string]string{"plan": "# P\n"})
+	if _, err := w.SetTaskStatus(alpha, "done"); !errors.As(err, &conflict) {
+		t.Fatalf("SetTaskStatus past the end = %v, want a conflict", err)
+	}
+	if _, _, err := w.Promote(alpha, "tasks"); !errors.As(err, &conflict) {
+		t.Fatalf("Promote past the end = %v, want a conflict", err)
+	}
+}
+
 func TestReplaceOneSpan(t *testing.T) {
 	w, root := emptyWiki(t)
 	put(t, w, root, map[string]string{"a": "# A\n\naaa and b and b\n"})
@@ -362,6 +395,57 @@ func TestMoveRewritesLinksInTheirOwnForm(t *testing.T) {
 	}
 	if got := strings.Join(broken, ", "); got != "notes/deep/other [[sketch]] ambiguous, notes/far [[sketch]] ambiguous" {
 		t.Fatalf("Broken = %s, want the newly ambiguous [[sketch]] links", got)
+	}
+}
+
+// An untitled page is titled by its file name; a move retitles it, so a link
+// by the old title is rewritten, and planning reports it.
+func TestMoveRewritesLinksToAnUntitledPage(t *testing.T) {
+	w, root := emptyWiki(t)
+	put(t, w, root, map[string]string{
+		"foo": "No heading here.\n",
+		"a":   "# A\n\nSee [[foo]] and [[Foo|the foo]].\n",
+	})
+	plan, err := w.PlanMove("foo", "sub/bar")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Edits) != 2 {
+		t.Fatalf("plan edits = %+v, want both links", plan.Edits)
+	}
+	if _, _, err := w.Move("foo", "sub/bar"); err != nil {
+		t.Fatal(err)
+	}
+	links, _ := w.Links("a")
+	for _, l := range links {
+		if l.Status != StatusOK || l.Resolved != "sub/bar" {
+			t.Errorf("%s is %s, resolved to %q\n%s", l.Written(), l.Status, l.Resolved, source(t, root, "a"))
+		}
+	}
+}
+
+// A page's wiki links to itself are rewritten with it, and planning reports
+// them under the new path.
+func TestMoveRewritesAPagesLinksToItself(t *testing.T) {
+	w, root := emptyWiki(t)
+	put(t, w, root, map[string]string{
+		"old-name": "# Notes\n\n## Sec\n\nSee [[old-name#Sec]] and [[Notes]].\n",
+	})
+	plan, err := w.PlanMove("old-name", "new-name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Edits) != 1 || plan.Edits[0].Page != "new-name" || plan.Edits[0].Old != "old-name#Sec" {
+		t.Fatalf("plan edits = %+v, want the one self link by name", plan.Edits)
+	}
+	if _, _, err := w.Move("old-name", "new-name"); err != nil {
+		t.Fatal(err)
+	}
+	links, _ := w.Links("new-name")
+	for _, l := range links {
+		if l.Status != StatusOK || l.Resolved != "new-name" {
+			t.Errorf("%s is %s\n%s", l.Written(), l.Status, source(t, root, "new-name"))
+		}
 	}
 }
 
@@ -713,5 +797,86 @@ func TestAWriteThatLandsWithAStaleCacheSucceedsWithAWarning(t *testing.T) {
 	}
 	if got := source(t, root, "new-page"); got != "# New page\n" {
 		t.Fatalf("new-page = %q", got)
+	}
+}
+
+// A cache another process holds locked is reported, not deleted and rebuilt.
+func TestOpenKeepsACacheLockedByAnotherProcess(t *testing.T) {
+	w, _ := emptyWiki(t)
+	before, err := os.Stat(w.Cache())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := w.db.Begin() // _txlock=immediate: takes the write lock
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+
+	saved := busyTimeout
+	busyTimeout = 50
+	t.Cleanup(func() { busyTimeout = saved })
+	if other, err := Open(w.Project); err == nil {
+		other.Close()
+		t.Fatal("Open took a cache another connection holds locked")
+	} else if !busy(err) {
+		t.Fatalf("Open = %v, want a busy error", err)
+	}
+	after, err := os.Stat(w.Cache())
+	if err != nil || !os.SameFile(before, after) {
+		t.Fatalf("the cache file was replaced: %v", err)
+	}
+}
+
+// An edit that keeps the size and restores the mtime, as rsync -t and tar do,
+// is re-indexed.
+func TestRefreshSeesAnEditWithItsMtimeRestored(t *testing.T) {
+	w, root := emptyWiki(t)
+	put(t, w, root, map[string]string{"plan": "# Plan\n\n- [ ] alpha\n"})
+	file := pageFile(root, "plan")
+	info, err := os.Stat(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond) // past the kernel's timestamp granularity
+	write(t, file, "# Plan\n\n- [x] alpha\n")
+	if err := os.Chtimes(file, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	ch, err := w.Refresh()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ch.Modified) != 1 {
+		t.Fatalf("changes = %+v, want plan modified", ch)
+	}
+	if tasks, _ := w.Tasks(TaskFilter{Page: "plan"}); len(tasks) != 1 || tasks[0].Status != "done" {
+		t.Fatalf("tasks = %+v", tasks)
+	}
+}
+
+// An editor outside gwiki that saves a page after the batch is checked is not
+// overwritten: each page is checked again before its rename.
+func TestABatchRechecksEachPageBeforeItsRename(t *testing.T) {
+	w, root := emptyWiki(t)
+	put(t, w, root, map[string]string{
+		"target": "# Target\n",
+		"source": "See [[target]].\n",
+	})
+	outside := "See [[target]]. Saved in an editor.\n"
+	afterStage = func() { write(t, pageFile(root, "source"), outside) }
+	t.Cleanup(func() { afterStage = func() {} })
+
+	_, _, err := w.Move("target", "moved")
+	var partial *ErrPartial
+	if !errors.As(err, &partial) || strings.Join(partial.Done, ",") != "moved" || strings.Join(partial.NotDone, ",") != "source,target" {
+		t.Fatalf("Move = %v", err)
+	}
+	if got := source(t, root, "source"); got != outside {
+		t.Fatalf("the outside save was overwritten:\n%s", got)
+	}
+	var conflict *ErrConflict
+	if !errors.As(partial.Err, &conflict) || conflict.Page != "source" {
+		t.Fatalf("partial.Err = %v, want a conflict on source", partial.Err)
 	}
 }

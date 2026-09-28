@@ -197,6 +197,7 @@ func (m *WikiModel) taskCells(t wiki.Task) []cell {
 
 // dueCell is a due date: red and marked when past, yellow within a week.
 func (m *WikiModel) dueCell(due string, done bool) cell {
+	due = display.Line(due) // a page's front matter can hold any text
 	today := m.now().Format("2006-01-02")
 	soon := m.now().AddDate(0, 0, 7).Format("2006-01-02")
 	switch {

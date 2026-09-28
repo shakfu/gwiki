@@ -65,8 +65,13 @@ func (t *table) write(w io.Writer) {
 	}
 
 	widths := make([]int, 0, 8)
-	for _, row := range t.rows {
+	for r, row := range t.rows {
 		for i, cell := range row {
+			// A styled cell that is the plain text unchanged prints as the plain
+			// text, cleaned below; page text passes through that way.
+			if t.styled[r] != nil && i < len(t.styled[r]) && t.styled[r][i] == cell {
+				t.styled[r][i] = ""
+			}
 			row[i] = display.Line(cell)
 			cell = row[i]
 			if i >= len(widths) {

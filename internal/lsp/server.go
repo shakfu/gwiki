@@ -353,7 +353,7 @@ func (s *Server) didOpen(raw json.RawMessage) (any, error) {
 	if file, ok := uriPath(d.uri); ok {
 		d.page, _ = s.w.PageOf(file)
 	}
-	s.docs[d.uri] = d
+	s.docs[docKey(d.uri)] = d
 	s.publish(d)
 	return nil, nil
 }
@@ -372,7 +372,7 @@ func (s *Server) didChange(raw json.RawMessage) (any, error) {
 	if err := decode(raw, &p); err != nil {
 		return nil, err
 	}
-	d, ok := s.docs[p.TextDocument.URI]
+	d, ok := s.docs[docKey(p.TextDocument.URI)]
 	if !ok {
 		return nil, fmt.Errorf("%s is not open", p.TextDocument.URI)
 	}
@@ -400,7 +400,7 @@ func (s *Server) didClose(raw json.RawMessage) (any, error) {
 	if err := decode(raw, &p); err != nil {
 		return nil, err
 	}
-	delete(s.docs, p.TextDocument.URI)
+	delete(s.docs, docKey(p.TextDocument.URI))
 	s.notify("textDocument/publishDiagnostics", map[string]any{"uri": p.TextDocument.URI, "diagnostics": []any{}})
 	return nil, nil
 }
@@ -516,7 +516,7 @@ func (s *Server) source(page string) (*text, error) {
 
 // doc looks up an open document for a request.
 func (s *Server) doc(uri string) (*document, error) {
-	d, ok := s.docs[uri]
+	d, ok := s.docs[docKey(uri)]
 	if !ok {
 		return nil, fmt.Errorf("%s is not open", uri)
 	}

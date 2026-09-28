@@ -3,6 +3,9 @@ package vim
 import (
 	"regexp"
 	"strings"
+
+	"github.com/charmbracelet/x/ansi"
+	"github.com/shakfu/gwiki/internal/display"
 )
 
 // motion returns where a movement lands. linewise and inclusive describe the
@@ -197,6 +200,9 @@ func (e *Editor) opRange(op string, keys []string, count int) (Pos, Pos, bool, r
 	}
 	if linewise {
 		return Pos{min(cur.Line, target.Line), 0}, Pos{max(cur.Line, target.Line), 0}, true, done
+	}
+	if !inclusive && target == cur {
+		return cur, cur, false, empty
 	}
 	a, z := sorted(cur, target)
 	if !inclusive {
@@ -596,28 +602,49 @@ func rowOf(rows []int, col int) int {
 }
 
 // Wrap returns the column each display row of a line starts at, breaking at
-// spaces where it can. The host draws lines the same way.
+// spaces where it can. width is in terminal cells, as the host draws them.
 func Wrap(line []rune, width int) []int {
 	rows := []int{0}
 	if width <= 0 {
 		return rows
 	}
 	start := 0
-	for start+width < len(line) {
+	for {
+		// fit is how many runes from start fill at most width cells, and at
+		// least one, so a rune wider than the row still advances.
+		fit, used := 0, 0
+		for start+fit < len(line) && used+RuneWidth(line[start+fit]) <= width {
+			used += RuneWidth(line[start+fit])
+			fit++
+		}
+		if fit = max(fit, 1); start+fit >= len(line) {
+			return rows
+		}
 		brk := -1
-		for i := start + width; i > start; i-- {
+		for i := start + fit; i > start; i-- {
 			if isSpace(line[i-1]) {
 				brk = i
 				break
 			}
 		}
 		if brk <= start {
-			brk = start + width
+			brk = start + fit
 		}
 		rows = append(rows, brk)
 		start = brk
 	}
-	return rows
+}
+
+// RuneWidth is the cells the host draws r in: a tab as four spaces, a control
+// character as "?", a wide character such as CJK as two.
+func RuneWidth(r rune) int {
+	switch {
+	case r == '\t':
+		return 4
+	case display.Control(r):
+		return 1
+	}
+	return ansi.StringWidth(string(r))
 }
 
 // ---------------------------------------------------------------- search

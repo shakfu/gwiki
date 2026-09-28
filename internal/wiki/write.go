@@ -188,8 +188,9 @@ func (w *Wiki) pageExists(page string) (bool, error) {
 // half-checked. Every page is then staged in a synced temporary file before any
 // is replaced, so a failure to write one leaves all as they were. The renames
 // put new pages first and removals last: a move that stops part-way leaves the
-// page in both places, never in neither. An editor outside gwiki takes no lock;
-// the checks still refuse to overwrite what it saved first.
+// page in both places, never in neither. An editor outside gwiki takes no lock,
+// so each base is checked again just before its rename; a save in the moment
+// between that check and the rename is still overwritten.
 func (w *Wiki) commit(writes []fileWrite) (Warnings, error) {
 	root, err := w.root()
 	if err != nil {
@@ -203,18 +204,8 @@ func (w *Wiki) commit(writes []fileWrite) (Warnings, error) {
 	defer tx.Rollback()
 
 	for _, fw := range writes {
-		current, err := readIn(root, fw.Page)
-		switch {
-		case os.IsNotExist(err):
-			if fw.Base != "" {
-				return Warnings{}, &ErrConflict{Page: fw.Page}
-			}
-		case err != nil:
+		if err := checkBase(root, fw); err != nil {
 			return Warnings{}, err
-		case fw.Base == "":
-			return Warnings{}, fmt.Errorf("%w: %s", ErrExists, fw.Page)
-		case Hash(current) != fw.Base:
-			return Warnings{}, &ErrConflict{Page: fw.Page, Current: current, CurrentHash: Hash(current)}
 		}
 	}
 
@@ -235,8 +226,14 @@ func (w *Wiki) commit(writes []fileWrite) (Warnings, error) {
 			}
 		}
 	}
+	afterStage()
 	done := 0
 	for i, fw := range writes {
+		// Checked again: an editor outside gwiki may have saved since, and
+		// this leaves it one rename to do so unseen, not the whole batch.
+		if err = checkBase(root, fw); err != nil {
+			break
+		}
 		if fw.Data == nil {
 			err = root.Remove(pageRel(fw.Page))
 		} else if err = root.Rename(temps[i], pageRel(fw.Page)); err == nil {
@@ -269,6 +266,29 @@ func (w *Wiki) commit(writes []fileWrite) (Warnings, error) {
 		return warn, partial
 	}
 	return warn, nil
+}
+
+// afterStage runs between staging and the renames; a test writes there as an
+// outside editor would.
+var afterStage = func() {}
+
+// checkBase refuses a write whose page no longer has the hash it was read at,
+// or, for a new page, one that exists.
+func checkBase(root *os.Root, fw fileWrite) error {
+	current, err := readIn(root, fw.Page)
+	switch {
+	case os.IsNotExist(err):
+		if fw.Base != "" {
+			return &ErrConflict{Page: fw.Page}
+		}
+	case err != nil:
+		return err
+	case fw.Base == "":
+		return fmt.Errorf("%w: %s", ErrExists, fw.Page)
+	case Hash(current) != fw.Base:
+		return &ErrConflict{Page: fw.Page, Current: current, CurrentHash: Hash(current)}
+	}
+	return nil
 }
 
 // writeOrder ranks a write: new pages, then changed pages, then removals.

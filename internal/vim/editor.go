@@ -1,6 +1,7 @@
 package vim
 
 import (
+	"slices"
 	"strings"
 	"unicode"
 )
@@ -114,7 +115,9 @@ type Editor struct {
 	insertStart Pos
 	waiting     pendingOp // an operator waiting for a search to finish
 	holding     bool      // an insert session is part of the change that started it
-	replaced    []string  // characters R overwrote, for backspace
+	resume      Mode      // the mode ctrl-o returns to after one command
+	resuming    bool
+	replaced    []string // characters R overwrote, for backspace
 }
 
 // New returns an editor over text.
@@ -143,6 +146,12 @@ func (e *Editor) Load(text string) {
 func (e *Editor) SetCursor(p Pos) {
 	e.Cursor = e.Buf.clamp(p, e.Mode == Insert || e.Mode == Replace)
 	e.wantCol = e.Cursor.Col
+}
+
+// Replace puts text between a and z, as the host does for a completion, and
+// leaves the cursor after it. It is one undo step, or part of the insertion.
+func (e *Editor) Replace(a, z Pos, text string) {
+	e.change(func() { e.SetCursor(e.Buf.Replace(a, z, text)) })
 }
 
 // Text is the buffer's content.
@@ -179,6 +188,7 @@ func (e *Editor) Key(k string) {
 	if !e.replaying && e.changing {
 		e.seq = append(e.seq, k)
 	}
+	once := e.resuming && e.Mode != Insert && e.Mode != Replace
 	switch e.Mode {
 	case Insert, Replace:
 		e.insertKey(k)
@@ -186,6 +196,16 @@ func (e *Editor) Key(k string) {
 		e.commandKey(k)
 	default:
 		e.normalKey(k)
+	}
+	if once {
+		switch {
+		case e.Mode == Insert || e.Mode == Replace:
+			e.resuming = false
+		case e.Mode == Normal && len(e.pending) == 0:
+			e.resuming = false
+			e.Mode = e.resume
+			e.Cursor = e.Buf.clamp(e.Cursor, true)
+		}
 	}
 	e.scroll()
 }
@@ -294,7 +314,15 @@ func (e *Editor) insertKey(k string) {
 			e.Hooks.Complete(k == "ctrl+p")
 		}
 	case "ctrl+o":
-		// One normal-mode command, then back to insert.
+		// One normal-mode command, then back to insert. The insertion so far
+		// is one undo step and the change "." repeats, as in vim.
+		e.Buf.commit(e.Cursor)
+		e.holding = false
+		if e.changing && !e.replaying {
+			e.lastChange = append(slices.Clone(e.seq[:len(e.seq)-1]), "esc")
+			e.changing = false
+		}
+		e.resume, e.resuming = e.Mode, true
 		e.Mode = Normal
 		e.pending = nil
 		e.setMessage("-- (insert) --")
@@ -476,24 +504,20 @@ func itoa(n int) string {
 // toggleCheckbox ticks or clears the checklist item on the cursor's line.
 func (e *Editor) toggleCheckbox() {
 	line := e.Buf.LineString(e.Cursor.Line)
-	i := strings.Index(line, "[ ]")
-	box := "[x]"
-	if i < 0 {
-		if i = strings.IndexAny(line, "["); i >= 0 && strings.HasPrefix(strings.ToLower(line[i:]), "[x]") {
-			box = "[ ]"
-		} else {
-			e.fail("no checklist item on this line")
-			return
-		}
-	}
-	_, marker, _, ok := listMarker(line)
+	indent, marker, _, ok := listMarker(line)
 	if !ok || !strings.Contains(marker, "[") {
 		e.fail("no checklist item on this line")
 		return
 	}
-	col := len([]rune(line[:i]))
+	// The item's own box, after the bullet: a "[ ]" later in the text is not.
+	at := len(indent) + len("- [")
+	box := "x"
+	if line[at] != ' ' {
+		box = " "
+	}
+	col := len([]rune(line[:at]))
 	e.change(func() {
-		e.Buf.Replace(Pos{e.Cursor.Line, col}, Pos{e.Cursor.Line, col + 3}, box)
+		e.Buf.Replace(Pos{e.Cursor.Line, col}, Pos{e.Cursor.Line, col + 1}, box)
 	})
 }
 

@@ -1,6 +1,7 @@
 package vim
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -101,6 +102,17 @@ func TestMotions(t *testing.T) {
 func TestOperators(t *testing.T) {
 	runCases(t, []testCase{
 		{name: "dw", text: "@alpha beta gamma\n", keys: "dw", want: "beta gamma\n"},
+		{name: "d0 at column 0 does nothing", text: "@abc\n", keys: "d0", want: "abc\n"},
+		{name: "dh at column 0 does nothing", text: "@abc\n", keys: "dh", want: "abc\n"},
+		{name: "db at the start does nothing", text: "@abc\n", keys: "db", want: "abc\n"},
+		{name: "c0 at column 0 inserts", text: "@abc\n", keys: "c0X<esc>", want: "Xabc\n"},
+		{name: "cw is one undo step", text: "@one two\n", keys: "cwxyz<esc>u", want: "one two\n"},
+		{name: "cc is one undo step", text: "one\n@two\n", keys: "ccxyz<esc>u", want: "one\ntwo\n"},
+		{name: "C is one undo step", text: "a@bc\n", keys: "Cxyz<esc>u", want: "abc\n"},
+		{name: "s is one undo step", text: "@abc\n", keys: "sxyz<esc>u", want: "abc\n"},
+		{name: "v c is one undo step", text: "@abc\n", keys: "vlcxyz<esc>u", want: "abc\n"},
+		{name: "c then dw undoes separately", text: "@one two three\n", keys: "cwxyz<esc>wdwu", want: "xyz two three\n"},
+		{name: "c0 at column 0 is one undo step", text: "@abc\n", keys: "c0X<esc>u", want: "abc\n"},
 		{name: "d2w", text: "@alpha beta gamma\n", keys: "d2w", want: "gamma\n"},
 		{name: "dw stops at the line end", text: "alpha @beta\nnext\n", keys: "dw", want: "alpha \nnext\n"},
 		{name: "de", text: "@alpha beta\n", keys: "de", want: " beta\n"},
@@ -177,6 +189,13 @@ func TestInsertMode(t *testing.T) {
 		{name: "R backspace restores", text: "@abcd\n", keys: "RXY<backspace><backspace><esc>", want: "abcd\n"},
 		{name: "checkbox toggles", text: "- [ ] tid@y\n", keys: "<ctrl+@>", want: "- [x] tidy\n"},
 		{name: "checkbox toggles back", text: "- [x] tid@y\n", keys: "<ctrl+@>", want: "- [ ] tidy\n"},
+		{name: "checkbox toggles its own box", text: "- [x] done [ ] oth@er\n", keys: "<ctrl+@>", want: "- [ ] done [ ] other\n"},
+		{name: "checkbox ignores a box in the text", text: "- [ ] see [x] ab@ove\n", keys: "<ctrl+@>", want: "- [x] see [x] above\n"},
+		{name: "checkbox toggles an indented item", text: "  * [X] ne@st\n", keys: "<ctrl+@>", want: "  * [ ] nest\n"},
+		{name: "ctrl-o runs one command, then inserts", text: "@ab\n", keys: "Ahello<ctrl+o>0X<esc>", want: "Xabhello\n"},
+		{name: "ctrl-o at the end keeps the column", text: "@ab\n", keys: "Ahe<ctrl+o>zzllo<esc>", want: "abhello\n"},
+		{name: "ctrl-o u undoes the insertion", text: "@xab\n", keys: "xihello<ctrl+o>u<esc>", want: "ab\n"},
+		{name: "ctrl-o then . repeats the insertion", text: "@ab\n", keys: "iX<ctrl+o><esc><esc>j.", want: "XXab\n"},
 	})
 }
 
@@ -197,6 +216,16 @@ func TestVisual(t *testing.T) {
 func TestRepeatUndoAndRegisters(t *testing.T) {
 	runCases(t, []testCase{
 		{name: "dot repeats a delete", text: "@a b c d\n", keys: "dw..", want: "d\n"},
+		{name: "an abandoned operator is not repeated", text: "@ab\ncd\n", keys: "xd<esc>j.", want: "b\nd\n"},
+		{name: "a failed change is not repeated", text: "@ab\ncd\n", keys: "xjdfz.", want: "b\nd\n"},
+		{name: "a count on dot after a register", text: "@1\n2\n3\n4\n5\n6\n", keys: "\"a2dd3.", want: "6\n", check: func(t *testing.T, e *Editor) {
+			if e.Mode != Normal {
+				t.Errorf("mode = %v", e.Mode)
+			}
+		}},
+		{name: "dot repeats a visual delete", text: "@abcdef\n", keys: "vld.", want: "ef\n"},
+		{name: "dot repeats a visual line delete", text: "@1\n2\n3\n4\n5\n", keys: "Vjd.", want: "5\n"},
+		{name: "dot repeats a visual change", text: "@abc abc\n", keys: "vlcX<esc>w.", want: "Xc Xc\n"},
 		{name: "dot repeats an insert", text: "@one\ntwo\n", keys: "IX<esc>j0.", want: "Xone\nXtwo\n"},
 		{name: "dot takes a new count", text: "@abcdef\n", keys: "x3.", want: "ef\n"},
 		{name: "u undoes", text: "@abc\n", keys: "xxu", want: "bc\n"},
@@ -418,5 +447,24 @@ func TestLargeCountsReturn(t *testing.T) {
 		t.Run(k, func(t *testing.T) {
 			edit(t, text, keys(k), "@")
 		})
+	}
+}
+
+// Rows are measured in cells: a wide character takes two, a tab four.
+func TestWrapCountsCells(t *testing.T) {
+	for _, c := range []struct {
+		line  string
+		width int
+		want  []int
+	}{
+		{"aaa bbb", 5, []int{0, 4}},
+		{"日本語テキスト", 6, []int{0, 3, 6}},
+		{"\t\tx", 6, []int{0, 1}},
+		{"日本", 1, []int{0, 1}}, // a rune wider than the row still advances
+	} {
+		got := Wrap([]rune(c.line), c.width)
+		if !slices.Equal(got, c.want) {
+			t.Errorf("Wrap(%q, %d) = %v, want %v", c.line, c.width, got, c.want)
+		}
 	}
 }
