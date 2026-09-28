@@ -1,0 +1,85 @@
+name: build
+
+# A version tag, as the project tags releases: 0.5.0, without a v. Run by
+# hand, it releases an existing tag.
+on:
+  push:
+    tags: ['[0-9]+.[0-9]+.[0-9]+']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: An existing version tag, such as 0.5.0
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - name: Check the version
+        run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::$VERSION is not a version tag"; exit 1; }
+
+      # The whole history, so the release notes can come from the workflow's
+      # own commit when that is not the tag.
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ env.VERSION }}
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Test
+        run: make check
+
+      - name: Warn on a version mismatch
+        run: |
+          grep -q "var version = \"$VERSION\"" cmd/gwiki/main.go ||
+            echo "::warning file=cmd/gwiki/main.go::version is not $VERSION; go install builds report the old one"
+
+      # Pure Go (modernc.org/sqlite), so one runner cross-compiles every target.
+      - name: Build
+        run: |
+          set -euo pipefail
+          mkdir dist
+          while read -r goos goarch label; do
+            name="gwiki-$VERSION-$label"
+            bin=gwiki
+            [ "$goos" = windows ] && bin=gwiki.exe
+            mkdir "dist/$name"
+            CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch go build -trimpath \
+              -ldflags "-s -w -X main.version=$VERSION" -o "dist/$name/$bin" ./cmd/gwiki
+            cp LICENSE README.md "dist/$name/"
+            if [ "$goos" = windows ]; then
+              (cd dist && zip -qr "$name.zip" "$name")
+            else
+              tar -C dist -czf "dist/$name.tar.gz" "$name"
+            fi
+            rm -rf "dist/$name"
+          done <<'EOF'
+          darwin arm64 macos-arm64
+          linux amd64 linux-x64
+          windows amd64 windows-x64
+          EOF
+          (cd dist && sha256sum -- * > SHA256SUMS)
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # The notes are the version's CHANGELOG section, from the commit this
+          # workflow ran from: the tag when pushed, the branch when run by hand.
+          # GitHub's own notes if it has none.
+          git show "$GITHUB_SHA:CHANGELOG.md" |
+            awk -v v="$VERSION" '$0 == "## [" v "]" {f=1; next} f && /^## \[/ {exit} f' > notes.md
+          if [ -s notes.md ]; then
+            gh release create "$VERSION" dist/* --title "$VERSION" --notes-file notes.md
+          else
+            gh release create "$VERSION" dist/* --title "$VERSION" --generate-notes
+          fi

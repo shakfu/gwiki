@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Fro
 
 ## [Unreleased]
 
+## [0.5.1]
+
+### Added
+
+**Release builds.** Pushing a version tag runs `.github/workflows/build.yml`: `make check`, then binaries for macOS arm64, Linux x64 and Windows x64, a `SHA256SUMS`, and a GitHub release titled with the version, with that version's CHANGELOG section as its notes. The version is stamped from the tag. The workflow warns when `cmd/gwiki/main.go` names another version. Run by hand with a `tag` input, it releases an existing tag.
+
+### Fixed
+
+**0.5.0 reported itself as 0.4.0** when built with `go install` or a plain `go build`; its source was not bumped. Builds through `make` stamped the tag and were right.
+
+## [0.5.0]
+
 ### Added
 
 **CI.** `.github/workflows/ci.yml` runs `make ci`: `make check`, then `staticcheck` and `govulncheck` at versions pinned in the Makefile. The review found GO-2026-5320 by hand; `govulncheck` now checks for such advisories on every push.

@@ -13,7 +13,7 @@ import (
 
 // version is this release. `make` overrides it with -ldflags "-X
 // main.version=..." when the commit is tagged.
-var version = "0.4.0"
+var version = "0.5.1"
 
 func main() {
 	cli.Version = version
