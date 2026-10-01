@@ -100,6 +100,8 @@ IDs refer to `REVIEW.md` (commit `2cdc3d9`, 2026-09-27), which holds the evidenc
 
 - [ ] W20. A directory link indexed before its `README.md` exists stays `kind=file`. `nested.go:45-63`
 
+- [ ] W21. An entity reference in a markdown link destination breaks resolution: `[f](no&#95;such.md)` splits at `#` into target `no&`. goldmark's renderer decodes entities, so `check` and the rendered `href` disagree. A fix must also decode in `checkDest`. Not in `REVIEW.md`. `markdown/markdown.go` (`markdownLink`), `wiki/move.go:280`
+
 - [ ] S7. `"id": null` is answered as a request; `jsonrpc` is not checked. `lsp/server.go:169`
 
 - [ ] S8. A second `initialize` succeeds and leaks the first cache handle. `lsp/server.go:291`

@@ -138,6 +138,27 @@ func TestEveryLinkStatus(t *testing.T) {
 	}
 }
 
+// A destination resolves as CommonMark renders it: backslash escapes and
+// percent-encoding are decoded, while Written keeps the source text.
+func TestEscapedDestinationsResolve(t *testing.T) {
+	w, root := fixture(t)
+	pages := filepath.Join(root, DirName, PagesDir)
+	write(t, filepath.Join(pages, "my_page (draft).md"), "# Draft\n")
+	write(t, filepath.Join(pages, "esc.md"), "[a](<my\\_page \\(draft\\).md>) [b](my_page%20%28draft%29.md) [c](<my_page (draft).md>) [d](no\\_such.md)\n")
+	if _, err := w.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		`my\_page \(draft\).md page ok my_page (draft)`,
+		"my_page%20%28draft%29.md page ok my_page (draft)",
+		"my_page (draft).md page ok my_page (draft)",
+		`no\_such.md page missing-page no_such`,
+	}
+	if got := statuses(t, w, "esc"); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("links:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
 // Deleting, restoring and renaming pages re-resolves links on other pages.
 func TestRefreshFollowsPagesComingAndGoing(t *testing.T) {
 	w, root := fixture(t)

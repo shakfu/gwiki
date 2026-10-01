@@ -2,7 +2,9 @@ package lsp
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -789,5 +791,201 @@ func TestFilesOutsideTheWiki(t *testing.T) {
 	}
 	if err := c.call("textDocument/rename", map[string]any{"textDocument": map[string]any{"uri": uri}, "position": Position{0, 3}, "newName": "x"}, nil); err == nil {
 		t.Fatal("renamed a file outside the wiki")
+	}
+}
+
+func TestAdvertisedCapabilitiesMatchHandlers(t *testing.T) {
+	c := start(t, newRepo(t))
+	caps := c.initialize(fullCapabilities)["capabilities"].(map[string]any)
+	byCapability := map[string][]string{
+		"completionProvider":      {"textDocument/completion"},
+		"definitionProvider":      {"textDocument/definition"},
+		"referencesProvider":      {"textDocument/references"},
+		"hoverProvider":           {"textDocument/hover"},
+		"documentSymbolProvider":  {"textDocument/documentSymbol"},
+		"workspaceSymbolProvider": {"workspace/symbol"},
+		"renameProvider":          {"textDocument/rename", "textDocument/prepareRename"},
+		"codeActionProvider":      {"textDocument/codeAction"},
+		"workspace":               {"workspace/willRenameFiles"},
+	}
+	advertised := map[string]bool{}
+	for capability, methods := range byCapability {
+		if caps[capability] == nil {
+			t.Errorf("%s is not advertised", capability)
+		}
+		for _, m := range methods {
+			advertised[m] = true
+			if handlers[m] == nil {
+				t.Errorf("%s is advertised but %s has no handler", capability, m)
+			}
+		}
+	}
+	// Lifecycle and notifications need no capability.
+	unadvertised := map[string]bool{"initialize": true, "initialized": true, "shutdown": true}
+	for m := range handlers {
+		if !advertised[m] && !unadvertised[m] && !strings.HasPrefix(m, "$/") && !strings.Contains(m, "/did") {
+			t.Errorf("%s has a handler but no advertised capability", m)
+		}
+	}
+}
+
+func TestMalformedParamsAreInvalidParams(t *testing.T) {
+	c := newClient(t)
+	if err := c.call("textDocument/hover", "not an object", nil); err == nil || err.Code != codeInvalidParams {
+		t.Fatalf("hover with a string for params = %v", err)
+	}
+}
+
+type failWriter struct{}
+
+func (failWriter) Write([]byte) (int, error) { return 0, errors.New("broken pipe") }
+
+func TestWriteFailuresAreLogged(t *testing.T) {
+	var in, logw bytes.Buffer
+	writeFrame(&in, map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{"rootUri": fileURI(newRepo(t))}})
+	s := New(opener, "gwiki", "test")
+	defer s.Close()
+	if err := s.Serve(&in, failWriter{}, &logw); err != nil {
+		t.Fatalf("Serve = %v", err)
+	}
+	if !strings.Contains(logw.String(), "gwiki lsp: write: broken pipe") {
+		t.Fatalf("log = %q", logw.String())
+	}
+}
+
+func TestWatchedFileChangesArePolled(t *testing.T) {
+	c := newClient(t)
+	uri := c.pageURI("index")
+	c.open(uri, pages["index"])
+	if d := c.diagnostics(uri); len(d) != 2 {
+		t.Fatalf("diagnostics = %+v", d)
+	}
+	writeFile(t, filepath.Join(c.root, ".gwiki", "wiki", "orphn.md"), "# Orphn\n")
+	c.notify("workspace/didChangeWatchedFiles", map[string]any{"changes": []any{}})
+	if d := c.diagnostics(uri); len(d) != 1 {
+		t.Fatalf("after the notification = %+v", d)
+	}
+}
+
+func TestEveryBrokenKindIsDescribed(t *testing.T) {
+	root := newRepo(t)
+	for _, id := range []string{"a/dup", "b/dup"} {
+		writeFile(t, filepath.Join(root, ".gwiki", "wiki", filepath.FromSlash(id)+".md"), "# Dup\n")
+	}
+	c := start(t, root)
+	c.initialize(fullCapabilities)
+	uri := c.pageURI("orphan")
+	body := "# Orphan\n\n[[Dup]]\n[[Design sketch#Nope]]\n[f](../../src/none.go)\n[l](../../src/lexer.go#L99)\n[o](../../../outside.md)\n[e](no-such.md)\n"
+	c.open(uri, body)
+	got := map[string]diagnostic{}
+	for _, d := range c.diagnostics(uri) {
+		got[d.Code] = d
+	}
+	want := map[string]string{
+		wiki.StatusAmbiguous:      `"Dup" names more than one page`,
+		wiki.StatusMissingHeading: `lexer/design-sketch has no heading "Nope"`,
+		wiki.StatusMissingFile:    "no file at ../../src/none.go",
+		wiki.StatusLineOutOfRange: "src/lexer.go has fewer lines than L99",
+		wiki.StatusOutsideRepo:    "../../../outside.md is outside the repository",
+		wiki.StatusMissingPage:    "no page at no-such.md",
+	}
+	if len(got) != len(want) {
+		t.Errorf("diagnostics = %+v", got)
+	}
+	for code, msg := range want {
+		if got[code].Message != msg {
+			t.Errorf("%s: message = %q, want %q", code, got[code].Message, msg)
+		}
+	}
+	if r := got[wiki.StatusMissingPage].Range; r != (Range{Position{7, 4}, Position{7, 14}}) {
+		t.Errorf("range of a markdown link = %+v", r)
+	}
+}
+
+func TestLinkRangeAndProblemFallBacks(t *testing.T) {
+	txt := newText([]byte("ab\ncd [x][r]\n"), false)
+	if r := linkRange(txt, wiki.Link{Start: 6, End: 12, DestStart: -1, DestEnd: -1}); r != (Range{Position{1, 3}, Position{1, 9}}) {
+		t.Errorf("range of a link without a destination = %+v", r)
+	}
+	if r := linkRange(txt, wiki.Link{Start: -1, End: -1, DestStart: -1, DestEnd: -1, Line: 2}); r != (Range{Position{1, 0}, Position{1, 0}}) {
+		t.Errorf("range of a link without a position = %+v", r)
+	}
+	if got := problem(wiki.Link{Status: "unknown-status"}); got != "unknown-status" {
+		t.Errorf("problem of an unknown status = %q", got)
+	}
+}
+
+func TestHoverByLinkKind(t *testing.T) {
+	c := newClient(t)
+	uri := c.pageURI("orphan")
+	body := "# Orphan\n\n[[Design sketch#Tokens]] [w](https://example.com) [f](../../src/lexer.go)\n"
+	c.open(uri, body)
+	c.diagnostics(uri)
+	hover := func(needle string) string {
+		t.Helper()
+		var h struct {
+			Contents struct {
+				Value string `json:"value"`
+			} `json:"contents"`
+		}
+		p := posOf(t, body, needle, 1)
+		c.mustCall("textDocument/hover", at(uri, p.Line, p.Character), &h)
+		return h.Contents.Value
+	}
+	if got := hover("Design sketch#"); got != "**Design sketch**\n\n`lexer/design-sketch` # Tokens\n\n2 backlinks" {
+		t.Errorf("hover on a heading link = %q", got)
+	}
+	if got := hover("https://"); got != "https://example.com" {
+		t.Errorf("hover on an external link = %q", got)
+	}
+	if got := hover("../../src"); got != "`src/lexer.go`" {
+		t.Errorf("hover on a file link = %q", got)
+	}
+}
+
+func TestPrepareRenameOffALink(t *testing.T) {
+	c := newClient(t)
+	index := c.pageURI("index")
+	c.open(index, pages["index"])
+	c.diagnostics(index)
+	for _, needle := range []string{"See", "Orphn"} {
+		p := posOf(t, pages["index"], needle, 1)
+		var prep struct {
+			Range       Range  `json:"range"`
+			Placeholder string `json:"placeholder"`
+		}
+		c.mustCall("textDocument/prepareRename", at(index, p.Line, p.Character), &prep)
+		if prep.Placeholder != "index" || prep.Range != (Range{p, p}) {
+			t.Errorf("prepareRename at %q = %+v", needle, prep)
+		}
+	}
+	readme := fileURI(filepath.Join(c.root, "README.md"))
+	c.open(readme, "text\n")
+	c.diagnostics(readme)
+	if err := c.call("textDocument/prepareRename", at(readme, 0, 0), nil); err == nil || !strings.Contains(err.Message, "only a wiki page") {
+		t.Fatalf("prepareRename outside the wiki = %v", err)
+	}
+}
+
+func TestWillRenameFilesRewritesTheMovedPage(t *testing.T) {
+	c := newClient(t)
+	var edit map[string]any
+	c.mustCall("workspace/willRenameFiles", map[string]any{"files": []any{map[string]any{
+		"oldUri": c.pageURI("index"), "newUri": c.pageURI("notes/index"),
+	}}}, &edit)
+	var texts []string
+	for _, raw := range edit["documentChanges"].([]any) {
+		ch := raw.(map[string]any)
+		if ch["textDocument"].(map[string]any)["uri"] != c.pageURI("index") {
+			continue
+		}
+		for _, e := range ch["edits"].([]any) {
+			texts = append(texts, e.(map[string]any)["newText"].(string))
+		}
+	}
+	sort.Strings(texts)
+	// Edits to the moved page apply to it under its old name, before the move.
+	if want := []string{"../../../src/lexer.go#L2-L3", "../lexer/design-sketch.md", "../nope.md"}; strings.Join(texts, " ") != strings.Join(want, " ") {
+		t.Fatalf("edits to the moved page = %q", texts)
 	}
 }

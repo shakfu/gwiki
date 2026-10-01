@@ -322,3 +322,26 @@ func TestWikiReportsSkippedFiles(t *testing.T) {
 		t.Fatalf("gwiki_create:\n%s", out)
 	}
 }
+
+func TestWikiListDescribesTaskPages(t *testing.T) {
+	f := newFixture(t)
+	f.page("tasks/ship", "---\ntitle: Ship\ntype: task\npriority: high\ndue: 2026-11-01\ntags: [release]\n---\n")
+	if out := f.mustCall("gwiki_list", nil); out != `tasks/ship  "Ship"  task:open  priority:high  due:2026-11-01  #release` {
+		t.Fatalf("list: %q", out)
+	}
+}
+
+func TestWikiTasksFilters(t *testing.T) {
+	f := newFixture(t)
+	f.page("plan", "# Plan\n\n- [ ] first\n")
+	f.page("other", "# Other\n\n- [ ] elsewhere\n")
+	if out := f.mustCall("gwiki_tasks", map[string]any{"page": "Plan"}); out != "plan:3  [ ]  first" {
+		t.Fatalf("tasks by page title: %q", out)
+	}
+	if out := f.mustCall("gwiki_tasks", map[string]any{"page": "plan", "status": "done"}); out != "No tasks match." {
+		t.Fatalf("tasks with no match: %q", out)
+	}
+	if text, isError := f.call("gwiki_tasks", map[string]any{"page": "nowhere"}); !isError || !strings.Contains(text, "nowhere") {
+		t.Fatalf("tasks on a missing page = %v %s", isError, text)
+	}
+}
