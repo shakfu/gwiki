@@ -9,6 +9,7 @@ import (
 	"net/textproto"
 	"net/url"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"unicode/utf16"
@@ -120,7 +121,21 @@ func uriPath(uri string) (string, bool) {
 	if err != nil || u.Scheme != "file" {
 		return "", false
 	}
-	return filepath.FromSlash(u.Path), true
+	p := u.Path
+	// "/c:/x" names drive C: on Windows.
+	if runtime.GOOS == "windows" && len(p) > 2 && p[0] == '/' && p[2] == ':' {
+		p = strings.ToUpper(p[1:2]) + p[2:]
+	}
+	return filepath.FromSlash(p), true
+}
+
+// docKey is the key of an open buffer: the cleaned path of a file:// URI, so
+// two spellings of one file's URI match, or else the URI itself.
+func docKey(uri string) string {
+	if p, ok := uriPath(uri); ok {
+		return filepath.Clean(p)
+	}
+	return uri
 }
 
 // ---------------------------------------------------------------- text

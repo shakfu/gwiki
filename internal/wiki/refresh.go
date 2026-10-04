@@ -32,8 +32,13 @@ func (c Changes) Empty() bool {
 }
 
 type fileStat struct {
-	rel         string // relative to the pages directory, slash-separated, with .md
-	size, mtime int64
+	rel                string // relative to the pages directory, slash-separated, with .md
+	size, mtime, ctime int64
+}
+
+// sameStat reports whether a file's size and times match what was indexed.
+func (f fileStat) sameStat(k knownFile) bool {
+	return k.size == f.size && k.mtime == f.mtime && k.ctime == f.ctime
 }
 
 // Skip is a file in the pages directory that the wiki leaves out.
@@ -70,9 +75,12 @@ type parsed struct {
 
 // Refresh brings the cache up to date with the pages on disk.
 //
-// Pages are compared by size and modification time; only those that differ are
-// read. A fingerprint of every page's name, size and time answers the common
-// case, nothing changed, without reading the file table. A write transaction is
+// Pages are compared by size, modification time and inode change time; only
+// those that differ are read. The change time catches a same-size edit that
+// restored the old modification time, as rsync -t and tar do; a page whose
+// change time alone moved and whose content hash matches is not re-indexed.
+// A fingerprint of every page's name, size and times answers the common case,
+// nothing changed, without reading the file table. A write transaction is
 // taken only when something changed.
 //
 // A file that cannot be read, and a symlink, are left out as if absent and
@@ -115,17 +123,23 @@ func (w *Wiki) Refresh() (Changes, error) {
 	}
 	var todo []fileStat
 	for _, f := range found {
-		if k, ok := known[f.rel]; !ok || k.size != f.size || k.mtime != f.mtime {
+		if k, ok := known[f.rel]; !ok || !f.sameStat(k) {
 			todo = append(todo, f)
 		}
 	}
 	unread := map[string]bool{}
+	restat := map[string]fileStat{} // content unchanged; only the change time moved
 	pages := slices.DeleteFunc(parseAll(root, todo), func(p parsed) bool {
 		if p.err != nil {
 			unread[p.rel] = true
 			skipped = append(skipped, skipErr(p.rel, p.err))
+			return true
 		}
-		return p.err != nil
+		if k, ok := known[p.rel]; ok && k.size == p.size && k.mtime == p.mtime && k.hash == p.hash {
+			restat[p.rel] = p.fileStat
+			return true
+		}
+		return false
 	})
 	slices.SortFunc(skipped, func(a, b Skip) int { return strings.Compare(a.Path, b.Path) })
 	found = slices.DeleteFunc(found, func(f fileStat) bool { return unread[f.rel] })
@@ -135,10 +149,11 @@ func (w *Wiki) Refresh() (Changes, error) {
 
 	for _, f := range found {
 		k, ok := known[f.rel]
+		_, same := restat[f.rel]
 		switch {
 		case !ok:
 			ch.Added = append(ch.Added, pageID(f.rel))
-		case k.size != f.size || k.mtime != f.mtime:
+		case !f.sameStat(k) && !same:
 			ch.Modified = append(ch.Modified, pageID(f.rel))
 		}
 		delete(known, f.rel)
@@ -162,6 +177,11 @@ func (w *Wiki) Refresh() (Changes, error) {
 		return ch, err
 	}
 	defer wr.close()
+	for rel, f := range restat {
+		if err := wr.exec("set ctime", f.ctime, rel); err != nil {
+			return ch, err
+		}
+	}
 
 	for _, id := range ch.Removed {
 		if err := wr.forget(id); err != nil {
@@ -237,7 +257,7 @@ func (w *Wiki) Refresh() (Changes, error) {
 	return ch, nil
 }
 
-// fingerprint summarises every page's name, size and modification time, and
+// fingerprint summarises every page's name, size and times, and
 // the names of the symlinks. The per-file hashes are summed, so the order of
 // the scan does not matter.
 func fingerprint(files []fileStat, skipped []Skip) string {
@@ -248,13 +268,14 @@ func fingerprint(files []fileStat, skipped []Skip) string {
 		}
 	}
 	var sum uint64
-	var buf [16]byte
+	var buf [24]byte
 	for _, f := range files {
 		h := fnv.New64a()
 		h.Write([]byte(f.rel))
 		for i := 0; i < 8; i++ {
 			buf[i] = byte(f.size >> (8 * i))
 			buf[8+i] = byte(f.mtime >> (8 * i))
+			buf[16+i] = byte(f.ctime >> (8 * i))
 		}
 		h.Write(buf[:])
 		sum += h.Sum64()
@@ -313,7 +334,7 @@ func (w *Wiki) scan(root *os.Root) ([]fileStat, []Skip, error) {
 		case !info.Mode().IsRegular():
 			skips[i] = Skip{Path: rels[i], Reason: "not a regular file"}
 		default:
-			out[i] = fileStat{rel: rels[i], size: info.Size(), mtime: info.ModTime().UnixNano()}
+			out[i] = fileStat{rel: rels[i], size: info.Size(), mtime: info.ModTime().UnixNano(), ctime: changeTime(info)}
 		}
 	})
 	kept := out[:0]
@@ -329,8 +350,8 @@ func (w *Wiki) scan(root *os.Root) ([]fileStat, []Skip, error) {
 }
 
 type knownFile struct {
-	size, mtime int64
-	hash        string
+	size, mtime, ctime int64
+	hash               string
 }
 
 func skippedIn(q interface {
@@ -363,7 +384,7 @@ func storedFingerprint(q interface {
 }
 
 func knownFiles(tx *sql.Tx) (map[string]knownFile, error) {
-	rows, err := tx.Query(`SELECT path, size, mtime, hash FROM files`)
+	rows, err := tx.Query(`SELECT path, size, mtime, ctime, hash FROM files`)
 	if err != nil {
 		return nil, err
 	}
@@ -372,7 +393,7 @@ func knownFiles(tx *sql.Tx) (map[string]knownFile, error) {
 	for rows.Next() {
 		var rel string
 		var k knownFile
-		if err := rows.Scan(&rel, &k.size, &k.mtime, &k.hash); err != nil {
+		if err := rows.Scan(&rel, &k.size, &k.mtime, &k.ctime, &k.hash); err != nil {
 			return nil, err
 		}
 		out[rel] = k
@@ -456,7 +477,8 @@ var writerStatements = map[string]string{
 	"del links":  `DELETE FROM links WHERE page = ?`,
 	"del check":  `DELETE FROM checklist WHERE page = ?`,
 	"del file":   `DELETE FROM files WHERE path = ?`,
-	"ins file":   `INSERT INTO files (path, size, mtime, hash) VALUES (?, ?, ?, ?)`,
+	"ins file":   `INSERT INTO files (path, size, mtime, ctime, hash) VALUES (?, ?, ?, ?, ?)`,
+	"set ctime":  `UPDATE files SET ctime = ? WHERE path = ?`,
 	"ins page":   `INSERT INTO pages (path, title, stem, type, status, priority, due, body) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 	"ins head":   `INSERT INTO headings (page, slug, text, level, line) VALUES (?, ?, ?, ?, ?)`,
 	"ins tag":    `INSERT INTO tags (page, tag) VALUES (?, ?)`,
@@ -540,7 +562,7 @@ func (wr *writer) insert(p parsed) error {
 	wr.touch(id, title, stem)
 	body := string(p.src[pg.BodyStart:])
 
-	if err := wr.exec("ins file", p.rel, p.size, p.mtime, p.hash); err != nil {
+	if err := wr.exec("ins file", p.rel, p.size, p.mtime, p.ctime, p.hash); err != nil {
 		return err
 	}
 	res, err := wr.stmts["ins page"].Exec(id, title, stem, strings.ToLower(f.Type), strings.ToLower(f.Status),

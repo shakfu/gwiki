@@ -6,6 +6,50 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Fro
 
 ## [Unreleased]
 
+### Changed
+
+**The browser and agents apply one rule to a write.** Both require the hash a page was read at, write LF line endings with one final newline, and name a checklist item by its text as well as its line. The browser created a page when the hash was empty, and accepted a task without its text. A task line that holds no task is now 400, not 404.
+
+**An edit that keeps a page's size and modification time is re-indexed.** Refresh compared only those two, so `rsync -t` or `tar` could change a page unseen. Refresh now also compares the inode change time, which tools cannot set. A page whose change time moved is re-read but re-indexed only if its hash differs, so a `chmod` costs one read. Windows keeps the old check. The cache schema is now 7, so the cache is rebuilt on first use.
+
+**A cache locked by another process is reported, not deleted.** `Open` rebuilt the cache on any connect error, including a lock held past the 5-second busy timeout, and removed the database under the other process. Only a corrupt file, a non-database file or another schema version now triggers a rebuild.
+
+### Fixed
+
+**A write checks each page again just before replacing it.** An editor outside gwiki takes no lock, so a save made while a write was staging was overwritten. A gap of one read and one rename remains.
+
+**Changing a task's status refuses a task that changed since it was listed.** Only the page hash was compared, so an item that took another's place at the same offset was ticked instead. The item's line, text and status are now compared with the page on disk.
+
+**`task promote` refuses a task whose page shrank since it was listed.** It panicked on the stale offset.
+
+**A move rewrites the moved page's wiki links to itself**, such as `[[design-sketch#Tokens]]`, and `--dry-run` lists them. They broke when the file name changed.
+
+**A move of an untitled page rewrites `[[old-name]]` links.** Such a page takes its title from its file name, so the move changed its title and left those links broken.
+
+**The browser view ties each checkbox to the task on its line.** A blockquoted checkbox renders but is not a task, and boxes were matched by position, so every later box ticked the wrong item.
+
+**A rename in the language server could overwrite unsaved changes** when the editor spelled the page's URI another way, such as `%20` for a space. Open buffers are now keyed by file path.
+
+**The language server's outline leaves out empty headings.** A bare `#` came out as a nameless symbol at line -1, which LSP forbids.
+
+**With colour on, `links`, `show`, `check` and `tasks` printed escape sequences from page text.** Link text, task text and skip reasons now pass through the same filter as the rest of the output.
+
+**The preview and the tasks list printed a page's `due` value unfiltered.** It now passes through the filter used for titles and tags.
+
+**Pasting into the editor saved carriage returns, and a one-character paste did nothing.** Terminals paste line breaks as `\r`, which now become line breaks.
+
+**Undo after a completion damaged the page, and the completion was left out of the draft.** A completion is now one undoable edit.
+
+**`ctrl-o` in insert mode left the editor in normal mode, and `u` could not undo the insert.** After one normal command the editor returns to insert mode, as in vim.
+
+**`d0`, `dh` and `db` deleted a character when the cursor could not move.** They now delete nothing, as in vim.
+
+**`.` repeated commands that changed nothing, and did nothing after a visual operator.** A failed command or a selection no longer replaces the last change. After a visual operator, `.` applies it to the same number of lines, or characters within a line, from the cursor. `>` and `<` now leave the cursor on the first shifted line.
+
+**Undoing a change took two `u`.** One now undoes both the deletion and the typed text.
+
+**The editor wrapped lines by character count, not screen width.** CJK lines ran past the edge and lines with tabs broke early. `gj` and `gk` now keep the screen column.
+
 ## [0.4.0]
 
 ### Security

@@ -178,9 +178,31 @@ func (w *Wiki) info(id string) (PageInfo, error) {
 }
 
 // Write replaces a page's whole source, given the hash of the source the
-// caller read.
+// caller read. An empty base writes a page that must not exist.
 func (w *Wiki) Write(page string, src []byte, base string) (Warnings, error) {
 	return w.commit([]fileWrite{{Page: page, Base: base, Data: src}})
+}
+
+// ErrNoBase reports a save without the hash of the page it replaces.
+var ErrNoBase = errors.New("a save needs the hash the page was read at; a new page is created, not saved")
+
+// Save is Write for text typed in the browser or by an agent: it takes LF line
+// endings and one final newline, refuses an empty base, and returns the new hash.
+func (w *Wiki) Save(page, text, base string) (string, Warnings, error) {
+	if base == "" {
+		return "", Warnings{}, ErrNoBase
+	}
+	src := normalizeSource(text)
+	warn, err := w.Write(page, src, base)
+	if err != nil {
+		return "", warn, err
+	}
+	return Hash(src), warn, nil
+}
+
+// normalizeSource gives text LF line endings and one final newline.
+func normalizeSource(text string) []byte {
+	return []byte(strings.TrimRight(strings.ReplaceAll(text, "\r\n", "\n"), "\n") + "\n")
 }
 
 // Replace swaps the one occurrence of old in a page for new, given the hash of
@@ -399,8 +421,46 @@ func (w *Wiki) FindTask(ref string) (Task, error) {
 	return Task{}, fmt.Errorf("%q could mean %s", ref, strings.Join(names, ", "))
 }
 
+// ErrTaskChanged reports a line that holds another item than the one listed.
+type ErrTaskChanged struct {
+	Page string
+	Line int
+	Now  string // the text the line holds now
+}
+
+func (e *ErrTaskChanged) Error() string {
+	return fmt.Sprintf("%s:%d now holds %q; list tasks again", e.Page, e.Line, e.Now)
+}
+
+// TaskAt names a task as a caller listed it: a checklist item by page, line
+// and text, or a task page by its path and line 0, whose text is optional.
+func (w *Wiki) TaskAt(page string, line int, text string) (Task, error) {
+	text = strings.TrimSpace(text)
+	if line > 0 && text == "" {
+		return Task{}, errors.New("pass the item's text as it was listed, so a line that now holds another item is refused")
+	}
+	tasks, err := w.Tasks(TaskFilter{Page: page})
+	if err != nil {
+		return Task{}, err
+	}
+	for _, t := range tasks {
+		if t.Line != line {
+			continue
+		}
+		if text != "" && text != t.Text {
+			return Task{}, &ErrTaskChanged{Page: page, Line: line, Now: t.Text}
+		}
+		return t, nil
+	}
+	if line == 0 {
+		return Task{}, fmt.Errorf("%s is not a task page; name a checklist item as page:line", page)
+	}
+	return Task{}, fmt.Errorf("no checklist item on line %d of %s", line, page)
+}
+
 // SetTaskStatus sets a task page's status, or ticks or clears a checklist
-// item, which has no doing.
+// item, which has no doing. A status already set is no change; a task whose
+// item, text or status on disk differs from t is a conflict.
 func (w *Wiki) SetTaskStatus(t Task, status string) (Warnings, error) {
 	switch status {
 	case "open", "doing", "done":
@@ -417,6 +477,16 @@ func (w *Wiki) SetTaskStatus(t Task, status string) (Warnings, error) {
 	}
 
 	if t.Line == 0 {
+		now := "open"
+		if p := markdown.Parse(src); p.Front != nil && p.Front.Status != "" {
+			now = strings.ToLower(p.Front.Status)
+		}
+		if now == status {
+			return Warnings{}, nil
+		}
+		if t.Status != "" && t.Status != now {
+			return Warnings{}, &ErrConflict{Page: t.Page, Current: src, CurrentHash: hash}
+		}
 		out, err := editFront(src, func(m *yaml.Node) error {
 			setScalar(m, "status", status)
 			return nil
@@ -430,19 +500,34 @@ func (w *Wiki) SetTaskStatus(t Task, status string) (Warnings, error) {
 	if status == "doing" {
 		return Warnings{}, errors.New("a checklist item is open or done; promote it to a task page for doing")
 	}
+	item, err := recheck(src, hash, t)
+	if err != nil {
+		return Warnings{}, err
+	}
+	if item.Done == (status == "done") {
+		return Warnings{}, nil
+	}
+	if t.Status != "" && item.Done != (t.Status == "done") {
+		return Warnings{}, &ErrConflict{Page: t.Page, Current: src, CurrentHash: hash}
+	}
 	box := byte(' ')
 	if status == "done" {
 		box = 'x'
 	}
-	if t.Box <= 0 || t.Box >= len(src) || !strings.ContainsRune(" xX", rune(src[t.Box])) {
-		return Warnings{}, &ErrConflict{Page: t.Page, Current: src, CurrentHash: hash}
-	}
-	if (src[t.Box] == ' ') == (box == ' ') {
-		return Warnings{}, nil
-	}
 	out := bytes.Clone(src)
 	out[t.Box] = box
 	return w.Write(t.Page, out, hash)
+}
+
+// recheck finds the checklist item t names in src, and refuses one whose line
+// or text changed since t was listed, so a stale offset never edits another item.
+func recheck(src []byte, hash string, t Task) (markdown.Task, error) {
+	for _, item := range markdown.Parse(src).Tasks {
+		if item.Box == t.Box && item.Line == t.Line && item.Text == t.Text {
+			return item, nil
+		}
+	}
+	return markdown.Task{}, &ErrConflict{Page: t.Page, Current: src, CurrentHash: hash}
 }
 
 var dueWord = regexp.MustCompile(`\s*\bdue:(\d{4}-\d{2}-\d{2})\b`)
@@ -457,14 +542,14 @@ func (w *Wiki) Promote(t Task, dir string) (PageInfo, Warnings, error) {
 	if err != nil {
 		return PageInfo{}, Warnings{}, err
 	}
+	if _, err := recheck(src, hash, t); err != nil {
+		return PageInfo{}, Warnings{}, err
+	}
 	lineEnd := bytes.IndexByte(src[t.Box:], '\n')
 	if lineEnd < 0 {
 		lineEnd = len(src)
 	} else {
 		lineEnd += t.Box
-	}
-	if t.Box < 1 || src[t.Box-1] != '[' || t.Box+1 >= len(src) || src[t.Box+1] != ']' {
-		return PageInfo{}, Warnings{}, &ErrConflict{Page: t.Page, Current: src, CurrentHash: hash}
 	}
 	text := strings.TrimSpace(string(src[t.Box+2 : lineEnd]))
 	title := strings.TrimSpace(dueWord.ReplaceAllString(text, ""))

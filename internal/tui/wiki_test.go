@@ -1220,3 +1220,55 @@ func TestQuitKeysQuitACleanBuffer(t *testing.T) {
 		}
 	}
 }
+
+// Completion is an edit like any other: one u takes it back, and the draft
+// learns of it.
+func TestWikiCompletionUndoesAndDrafts(t *testing.T) {
+	f := newWikiFixture(t)
+	f.m.focus = focusContent
+	f.press("G", "o")
+	f.typing("see [[desi")
+	f.press("esc")
+	f.m.edit.draftPending = false
+	f.press("A", "ctrl+n")
+	ed := f.m.edit.ed
+	if got := ed.Buf.LineString(ed.Cursor.Line); !strings.HasSuffix(got, "see [[Design sketch") {
+		t.Fatalf("completion: %q", got)
+	}
+	if !f.m.edit.draftPending {
+		t.Error("completion left the draft behind the buffer")
+	}
+	f.press("esc", "u")
+	if got := ed.Buf.LineString(ed.Cursor.Line); !strings.HasSuffix(got, "see [[desi") {
+		t.Fatalf("u after completion: %q\n%s", got, ed.Text())
+	}
+}
+
+// Terminals send a pasted newline as \r, and a paste of one rune is a paste.
+func TestWikiEditorPaste(t *testing.T) {
+	f := newWikiFixture(t)
+	f.m.focus = focusContent
+	f.press("G", "o")
+	f.m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("one\r\ntwo\rthree"), Paste: true})
+	f.m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("!"), Paste: true})
+	text := f.m.edit.ed.Text()
+	if strings.Contains(text, "\r") || !strings.Contains(text, "one\ntwo\nthree!") {
+		t.Fatalf("paste:\n%q", text)
+	}
+}
+
+// A due date is front matter, so the preview prints it made safe.
+func TestWikiPreviewSanitizesDue(t *testing.T) {
+	f := newWikiFixture(t)
+	f.write("tasks/ship", "---\ntitle: Ship it\ndue: \"2026-09-01\\e]0;PWNED\\a\"\n---\n\nBody.\n")
+	f.m.Update(pollMsg{})
+	f.m.focus = focusContent
+	f.press("ctrl+p", "ship", "enter")
+	f.press(":preview", "enter")
+	if out := f.m.View(); strings.Contains(out, "\x1b]0;") || strings.Contains(out, "\x07") {
+		t.Fatalf("a control sequence from a due date reached the terminal: %q", out)
+	}
+	if v := flat(f.view()); !strings.Contains(v, "due 2026-09-01?]0;PWNED?") {
+		t.Fatalf("no due date over the preview:\n%s", v)
+	}
+}

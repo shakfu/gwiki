@@ -92,6 +92,10 @@ func (e *Editor) runSearch(kind rune, pattern string) {
 		e.waiting = pendingOp{}
 		e.Cursor = op.from
 		a, z := sorted(op.from, p)
+		if a == z {
+			e.emptyOperator(op.op)
+			return
+		}
 		if z.Col > 0 {
 			z.Col-- // a search is an exclusive motion
 		} else if z.Line > a.Line {

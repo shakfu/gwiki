@@ -420,3 +420,100 @@ func TestLargeCountsReturn(t *testing.T) {
 		})
 	}
 }
+
+func TestInsertCtrlO(t *testing.T) {
+	runCases(t, []testCase{
+		{name: "one command, then insert again", text: "@one\n", keys: "iab<ctrl+o>0cd<esc>", want: "cdabone\n",
+			check: func(t *testing.T, e *Editor) {
+				if e.Mode != Normal {
+					t.Errorf("mode = %v", e.Mode)
+				}
+			}},
+		{name: "u undoes the insert after ctrl-o", text: "@one\n", keys: "iab<ctrl+o>0cd<esc>u", want: "abone\n"},
+		{name: "u undoes the insert before ctrl-o", text: "@one\n", keys: "iab<ctrl+o>0cd<esc>uu", want: "one\n"},
+		{name: "u undoes the command run by ctrl-o", text: "@one\n", keys: "iab<ctrl+o>xcd<esc>u", want: "abne\n"},
+		{name: "a command that inserts stays in insert", text: "@one\n", keys: "i<ctrl+o>otwo<esc>", want: "one\ntwo\n"},
+	})
+}
+
+// An exclusive motion that does not move covers nothing, as in vim.
+func TestEmptyExclusiveRange(t *testing.T) {
+	runCases(t, []testCase{
+		{name: "d0 at column 0", text: "@one\n", keys: "d0", want: "one\n"},
+		{name: "dh at column 0", text: "one\n@two\n", keys: "dh", want: "one\ntwo\n"},
+		{name: "db at the start", text: "@one\n", keys: "db", want: "one\n"},
+		{name: "c0 at column 0 inserts", text: "@one\n", keys: "c0X<esc>", want: "Xone\n"},
+	})
+}
+
+func TestDotRepeatsOnlyChanges(t *testing.T) {
+	runCases(t, []testCase{
+		{name: "a failed motion is not a change", text: "@a b c d\n", keys: "dwdfz.", want: "c d\n"},
+		{name: "a visual text object is not a change", text: "@abc def\n", keys: "xviw<esc>.", want: "b def\n"},
+		{name: "an operator over a search", text: "@a x b x c\n", keys: "d/x<enter>.", want: "x c\n"},
+		{name: "a cancelled search is not a change", text: "@a b c\n", keys: "xd/b<esc>.", want: "b c\n"},
+		{name: "visual chars", text: "@abcdef\n", keys: "vld.", want: "ef\n"},
+		{name: "visual lines", text: "@1\n2\n3\n4\n5\n", keys: "Vjd.", want: "5\n"},
+		{name: "visual across lines", text: "@abc\ndef\nghi\njkl\n", keys: "vjd.", want: "hi\njkl\n"},
+		{name: "visual change", text: "@abcdef\n", keys: "vlcX<esc>l.", want: "XXef\n"},
+		{name: "visual shift leaves the cursor on the first line", text: "@a\nb\nc\n", keys: "Vj>", at: Pos{0, 2}},
+		{name: "visual shift", text: "@a\nb\nc\nd\n", keys: "Vj>jj.", want: "  a\n  b\n  c\n  d\n"},
+		{name: "visual with a register", text: "@abcdef\n", keys: `v"ad.`, want: "cdef\n",
+			check: func(t *testing.T, e *Editor) {
+				if got := e.Register('a'); got != "b" {
+					t.Errorf("register a = %q", got)
+				}
+			}},
+	})
+}
+
+func TestChangeIsOneUndoStep(t *testing.T) {
+	runCases(t, []testCase{
+		{name: "ciw", text: "@one two\n", keys: "ciwX<esc>u", want: "one two\n"},
+		{name: "cc", text: "@one two\n", keys: "ccX<esc>u", want: "one two\n"},
+		{name: "C", text: "@one two\n", keys: "CX<esc>u", want: "one two\n"},
+		{name: "s", text: "@one two\n", keys: "sX<esc>u", want: "one two\n"},
+		{name: "visual c", text: "@one two\n", keys: "vecX<esc>u", want: "one two\n"},
+		{name: "redo", text: "@one two\n", keys: "ciwX<esc>u<ctrl+r>", want: "X two\n"},
+	})
+}
+
+// Wide runes take two columns and a tab four, as the host draws them.
+func TestWrapByColumns(t *testing.T) {
+	for _, c := range []struct {
+		line  string
+		width int
+		want  []int
+	}{
+		{"日本語日本語", 6, []int{0, 3}},
+		{"日本語日本語", 7, []int{0, 3}},
+		{"日本語日本語", 12, []int{0}},
+		{"\tabcd", 6, []int{0, 1}},
+		{"abcdef", 3, []int{0, 3}},
+		{"日", 1, []int{0}},
+	} {
+		if got := Wrap([]rune(c.line), c.width); !equalInts(got, c.want) {
+			t.Errorf("Wrap(%q, %d) = %v, want %v", c.line, c.width, got, c.want)
+		}
+	}
+	// gj keeps the screen column, not the rune offset.
+	e := New("ab日本語日本\n")
+	e.Width = 6
+	e.SetCursor(Pos{0, 2})
+	e.Keys("g", "j")
+	if e.Cursor != (Pos{0, 5}) {
+		t.Fatalf("gj = %+v", e.Cursor)
+	}
+}
+
+func equalInts(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

@@ -8,6 +8,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -143,7 +144,7 @@ func (s *Server) references(raw json.RawMessage) (any, error) {
 		}
 		// An open buffer may differ from the indexed page; its own links are
 		// resolved again so the positions match what the editor shows.
-		if uri := fileURI(s.w.PageFile(b.Page)); s.docs[uri] != nil {
+		if _, open := s.pageDoc(b.Page); open {
 			continue
 		}
 		out = append(out, Location{URI: fileURI(s.w.PageFile(b.Page)), Range: linkRange(t, b)})
@@ -265,7 +266,9 @@ func (s *Server) documentSymbol(raw json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	heads := markdown.Parse(d.text.src).Headings
+	// An empty heading has no name, which LSP requires, and the parser gives
+	// it no line; it is left out, its text falling in the section above.
+	heads := slices.DeleteFunc(markdown.Parse(d.text.src).Headings, func(h markdown.Heading) bool { return h.Text == "" })
 	lastLine := len(d.text.lines) - 1
 
 	// Each heading's section runs to the next heading at its level or above.
@@ -607,7 +610,7 @@ func (s *Server) plan(from, to string) (*wiki.MovePlan, error) {
 		pages[s.sourcePage(plan, e)] = true
 	}
 	for page := range pages {
-		d, open := s.docs[fileURI(s.w.PageFile(page))]
+		d, open := s.pageDoc(page)
 		if !open {
 			continue
 		}

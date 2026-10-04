@@ -103,6 +103,8 @@ type Editor struct {
 	changing   bool
 	lastChange []string
 	replaying  bool
+	changeFrom int  // Buf.edits when the change began
+	resume     Mode // the insert mode ctrl-o returns to, or Normal
 
 	visualStart Pos
 	cmdKind     rune
@@ -135,6 +137,7 @@ func (e *Editor) Load(text string) {
 	e.Dirty = false
 	e.Mode = Normal
 	e.pending = nil
+	e.resume = Normal
 }
 
 // SetCursor moves the cursor, as the host does when it opens a page at a line
@@ -184,10 +187,39 @@ func (e *Editor) Key(k string) {
 		e.insertKey(k)
 	case Command:
 		e.commandKey(k)
+		e.endCommand()
 	default:
 		e.normalKey(k)
+		e.endCommand()
 	}
 	e.scroll()
+}
+
+// endCommand runs once a normal-mode command is complete: it keeps the
+// command for "." if it changed the buffer, and returns to insert after
+// ctrl-o.
+func (e *Editor) endCommand() {
+	if e.replaying || len(e.pending) > 0 || e.waiting.active {
+		return
+	}
+	switch e.Mode {
+	case Insert, Replace:
+		e.resume = Normal // the command started an insert of its own
+		return
+	case Command:
+		return
+	}
+	if e.changing {
+		if e.Buf.edits != e.changeFrom {
+			e.lastChange = e.seq
+		}
+		e.changing = false
+	}
+	if e.Mode == Normal && e.resume != Normal {
+		mode := e.resume
+		e.resume = Normal
+		e.startInsert(mode)
+	}
 }
 
 // Keys feeds several keypresses, as a test or "." does.
@@ -294,8 +326,13 @@ func (e *Editor) insertKey(k string) {
 			e.Hooks.Complete(k == "ctrl+p")
 		}
 	case "ctrl+o":
-		// One normal-mode command, then back to insert.
-		e.Mode = Normal
+		// One normal-mode command, then back to insert. As in vim, the insert
+		// so far is its own undo step and change for ".".
+		if e.changing && !e.replaying {
+			e.seq[len(e.seq)-1] = "esc"
+		}
+		e.resume = e.Mode
+		e.endInsert()
 		e.pending = nil
 		e.setMessage("-- (insert) --")
 		return
@@ -373,11 +410,16 @@ func (e *Editor) deleteWordBack() {
 
 // leaveInsert returns to normal mode, as esc does.
 func (e *Editor) leaveInsert() {
+	e.endInsert()
+	e.Cursor = e.Buf.clamp(Pos{e.Cursor.Line, e.Cursor.Col - 1}, false)
+}
+
+// endInsert closes the insert's undo step and keeps it for ".".
+func (e *Editor) endInsert() {
 	e.holding = false
 	e.Buf.commit(e.Cursor)
 	e.Mode = Normal
 	e.replaced = nil
-	e.Cursor = e.Buf.clamp(Pos{e.Cursor.Line, e.Cursor.Col - 1}, false)
 	if e.changing && !e.replaying {
 		e.lastChange = e.seq
 	}

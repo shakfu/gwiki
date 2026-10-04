@@ -17,6 +17,7 @@ import (
 	"io"
 	"maps"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -54,7 +55,7 @@ type Server struct {
 	// path in the pages directory.
 	skipped map[string]string
 
-	docs map[string]*document // by URI
+	docs map[string]*document // by docKey
 
 	initialized, shutdown bool
 	utf16                 bool
@@ -353,7 +354,7 @@ func (s *Server) didOpen(raw json.RawMessage) (any, error) {
 	if file, ok := uriPath(d.uri); ok {
 		d.page, _ = s.w.PageOf(file)
 	}
-	s.docs[d.uri] = d
+	s.docs[docKey(d.uri)] = d
 	s.publish(d)
 	return nil, nil
 }
@@ -372,7 +373,7 @@ func (s *Server) didChange(raw json.RawMessage) (any, error) {
 	if err := decode(raw, &p); err != nil {
 		return nil, err
 	}
-	d, ok := s.docs[p.TextDocument.URI]
+	d, ok := s.docs[docKey(p.TextDocument.URI)]
 	if !ok {
 		return nil, fmt.Errorf("%s is not open", p.TextDocument.URI)
 	}
@@ -400,7 +401,7 @@ func (s *Server) didClose(raw json.RawMessage) (any, error) {
 	if err := decode(raw, &p); err != nil {
 		return nil, err
 	}
-	delete(s.docs, p.TextDocument.URI)
+	delete(s.docs, docKey(p.TextDocument.URI))
 	s.notify("textDocument/publishDiagnostics", map[string]any{"uri": p.TextDocument.URI, "diagnostics": []any{}})
 	return nil, nil
 }
@@ -428,13 +429,13 @@ func (s *Server) poll() {
 	if !s.checkDrift(!ch.Empty()) && ch.Empty() && !skipped {
 		return
 	}
-	uris := make([]string, 0, len(s.docs))
-	for uri := range s.docs {
-		uris = append(uris, uri)
+	keys := make([]string, 0, len(s.docs))
+	for k := range s.docs {
+		keys = append(keys, k)
 	}
-	sort.Strings(uris)
-	for _, uri := range uris {
-		s.publish(s.docs[uri])
+	sort.Strings(keys)
+	for _, k := range keys {
+		s.publish(s.docs[k])
 	}
 }
 
@@ -503,8 +504,7 @@ func (s *Server) driftOf(page string, l wiki.Link) (wiki.Drifted, bool) {
 
 // source is a page's text: the open buffer, or the file.
 func (s *Server) source(page string) (*text, error) {
-	uri := fileURI(s.w.PageFile(page))
-	if d, ok := s.docs[uri]; ok {
+	if d, ok := s.pageDoc(page); ok {
 		return d.text, nil
 	}
 	src, err := os.ReadFile(s.w.PageFile(page))
@@ -514,9 +514,15 @@ func (s *Server) source(page string) (*text, error) {
 	return newText(src, s.utf16), nil
 }
 
+// pageDoc is the open buffer of a page, if any.
+func (s *Server) pageDoc(page string) (*document, bool) {
+	d, ok := s.docs[filepath.Clean(s.w.PageFile(page))]
+	return d, ok
+}
+
 // doc looks up an open document for a request.
 func (s *Server) doc(uri string) (*document, error) {
-	d, ok := s.docs[uri]
+	d, ok := s.docs[docKey(uri)]
 	if !ok {
 		return nil, fmt.Errorf("%s is not open", uri)
 	}

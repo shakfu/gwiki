@@ -343,9 +343,7 @@ func (m *WikiModel) insertCompletion() {
 	e := m.edit
 	c := &e.complete
 	item := c.items[c.index]
-	e.ed.Buf.Replace(c.at, e.ed.Cursor, item)
-	e.ed.SetCursor(vim.Pos{Line: c.at.Line, Col: c.at.Col + len([]rune(item))})
-	e.ed.Dirty = true
+	e.ed.ReplaceText(c.at, e.ed.Cursor, item)
 	e.ed.Message = fmt.Sprintf("%d of %d: ctrl-n and ctrl-p cycle", c.index+1, len(c.items))
 }
 
@@ -423,9 +421,11 @@ func (m *WikiModel) keyContent(msg tea.KeyMsg) {
 		}
 	}
 	e.ed.Width, e.ed.Height = m.bufferWidth(), m.contentHeight()
-	// Fast typing and pastes arrive as one message holding several runes.
-	if msg.Type == tea.KeyRunes && len(msg.Runes) > 1 {
-		for _, r := range msg.Runes {
+	// Fast typing and pastes arrive as one message holding several runes. A
+	// paste of one rune is named "[x]", and terminals paste newlines as \r.
+	if msg.Type == tea.KeyRunes && (len(msg.Runes) > 1 || msg.Paste) {
+		text := strings.ReplaceAll(string(msg.Runes), "\r\n", "\n")
+		for _, r := range strings.ReplaceAll(text, "\r", "\n") {
 			e.ed.Key(string(r))
 		}
 	} else {

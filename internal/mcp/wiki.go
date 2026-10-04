@@ -635,14 +635,14 @@ func (s *Server) wikiWrite(raw json.RawMessage) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if a.Base == "" {
+	hash, warn, err := s.wiki.Save(p, a.Content, a.Base)
+	switch {
+	case errors.Is(err, wiki.ErrNoBase):
 		return "", errors.New("base is the hash from gwiki_read; use gwiki_create for a new page")
-	}
-	warn, err := s.wiki.Write(p, []byte(a.Content), a.Base)
-	if err != nil {
+	case err != nil:
 		return "", writeErr(err)
 	}
-	return warned(fmt.Sprintf("wrote %s\nhash: %s", p, wiki.Hash([]byte(a.Content))), warn), nil
+	return warned(fmt.Sprintf("wrote %s\nhash: %s", p, hash), warn), nil
 }
 
 func (s *Server) wikiRename(raw json.RawMessage) (string, error) {
@@ -780,40 +780,19 @@ func (s *Server) wikiSetTask(raw json.RawMessage) (string, error) {
 	if err := decodeArgs(raw, &a); err != nil {
 		return "", err
 	}
-	var t wiki.Task
-	i := strings.LastIndexByte(a.Task, ':')
-	if line, err := strconv.Atoi(a.Task[i+1:]); i > 0 && err == nil {
-		p, err := s.pagePath(a.Task[:i])
-		if err != nil {
-			return "", err
-		}
-		if t, err = s.wiki.FindTask(fmt.Sprintf("%s:%d", p, line)); err != nil {
-			return "", err
-		}
-		if a.Text == "" {
-			return "", errors.New("pass the item's text as gwiki_tasks listed it")
-		}
-	} else {
-		p, err := s.pagePath(a.Task)
-		if err != nil {
-			return "", err
-		}
-		tasks, err := s.wiki.Tasks(wiki.TaskFilter{Page: p})
-		if err != nil {
-			return "", err
-		}
-		found := false
-		for _, candidate := range tasks {
-			if candidate.Line == 0 {
-				t, found = candidate, true
-			}
-		}
-		if !found {
-			return "", fmt.Errorf("%s is not a task page; name a checklist item as page:line", p)
+	ref, line := a.Task, 0
+	if i := strings.LastIndexByte(a.Task, ':'); i > 0 {
+		if n, err := strconv.Atoi(a.Task[i+1:]); err == nil {
+			ref, line = a.Task[:i], n
 		}
 	}
-	if a.Text != "" && strings.TrimSpace(a.Text) != t.Text {
-		return "", fmt.Errorf("%s now holds %q; list tasks again", a.Task, t.Text)
+	p, err := s.pagePath(ref)
+	if err != nil {
+		return "", err
+	}
+	t, err := s.wiki.TaskAt(p, line, a.Text)
+	if err != nil {
+		return "", err
 	}
 	warn, err := s.wiki.SetTaskStatus(t, a.Status)
 	if err != nil {

@@ -2,11 +2,13 @@ package wiki
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // schemaVersion is PRAGMA user_version. Any other value, or a file SQLite
@@ -14,7 +16,26 @@ import (
 // 4: a directory's README is titled, found and linked by the directory.
 // 5: a checklist item's text no longer holds its due: date.
 // 6: skipped lists the files a refresh left out.
-const schemaVersion = 6
+// 7: files records the inode change time.
+const schemaVersion = 7
+
+// busyTimeout is how long, in milliseconds, a connection waits for another
+// writer's lock.
+var busyTimeout = 5000
+
+// errSchema marks a cache from another schema.
+var errSchema = errors.New("cache schema differs")
+
+// rebuildable reports whether err shows a cache that is safe to delete: one
+// from another schema, or one SQLite reads as corrupt or not a database.
+func rebuildable(err error) bool {
+	var se *sqlite.Error
+	if errors.As(err, &se) {
+		code := se.Code() & 0xff
+		return code == sqlite3.SQLITE_CORRUPT || code == sqlite3.SQLITE_NOTADB
+	}
+	return errors.Is(err, errSchema)
+}
 
 const schema = `
 CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
@@ -23,6 +44,7 @@ CREATE TABLE files (
 	path  TEXT PRIMARY KEY,
 	size  INTEGER NOT NULL,
 	mtime INTEGER NOT NULL,
+	ctime INTEGER NOT NULL,
 	hash  TEXT NOT NULL
 );
 
@@ -115,7 +137,12 @@ type Wiki struct {
 func Open(p *Project) (*Wiki, error) {
 	w := &Wiki{Project: p}
 	if err := w.connect(); err != nil {
-		// Unreadable or from another schema: start again, once.
+		// Corrupt or from another schema: start again, once. Any other error,
+		// such as a lock held too long, leaves the cache alone.
+		if !rebuildable(err) {
+			w.Close()
+			return nil, err
+		}
 		w.discard()
 		if err := w.connect(); err != nil {
 			return nil, err
@@ -157,7 +184,7 @@ func (w *Wiki) discard() {
 func (w *Wiki) connect() error {
 	q := url.Values{}
 	q.Set("_txlock", "immediate")
-	q.Add("_pragma", "busy_timeout(5000)")
+	q.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", busyTimeout))
 	q.Add("_pragma", "journal_mode(WAL)")
 	q.Add("_pragma", "synchronous(NORMAL)")
 	dsn := (&url.URL{Scheme: "file", OmitHost: true, Path: w.Cache(), RawQuery: q.Encode()}).String()
@@ -183,13 +210,13 @@ func (w *Wiki) connect() error {
 	case 0:
 		var tables int
 		if err := tx.QueryRow(`SELECT count(*) FROM sqlite_schema`).Scan(&tables); err != nil {
-			return err
+			return fmt.Errorf("read %s: %w", w.Cache(), err)
 		}
 		if tables != 0 {
-			return fmt.Errorf("%s holds tables but no schema version", w.Cache())
+			return fmt.Errorf("%w: %s holds tables but no schema version", errSchema, w.Cache())
 		}
 	default:
-		return fmt.Errorf("%s has schema %d, this build uses %d", w.Cache(), version, schemaVersion)
+		return fmt.Errorf("%w: %s has schema %d, this build uses %d", errSchema, w.Cache(), version, schemaVersion)
 	}
 	if _, err := tx.Exec(schema); err != nil {
 		return fmt.Errorf("create %s: %w", w.Cache(), err)

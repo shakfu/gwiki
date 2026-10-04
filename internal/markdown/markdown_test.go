@@ -235,3 +235,20 @@ func TestAnUnresolvedWikiLinkNeverRunsScript(t *testing.T) {
 		t.Fatalf("HTML = %s, %v", out, err)
 	}
 }
+
+// The browser matches a checkbox to its task by line, since a blockquoted box
+// renders but is no task.
+func TestCheckboxesCarryTheirLine(t *testing.T) {
+	src := "---\ntitle: Plan\n---\n\n> - [ ] quoted\n\n- [x] real\n"
+	out, err := HTML([]byte(src), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(out)
+	if !strings.Contains(html, `data-line="5"`) || !strings.Contains(html, `<input checked="" disabled="" type="checkbox" data-line="7">`) {
+		t.Fatalf("HTML = %s", html)
+	}
+	if tasks := Parse([]byte(src)).Tasks; len(tasks) != 1 || tasks[0].Line != 7 {
+		t.Fatalf("tasks = %+v", tasks)
+	}
+}

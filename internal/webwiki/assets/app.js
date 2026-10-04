@@ -315,8 +315,9 @@ async function showPage(id) {
     a.target = "_blank";
     a.rel = "noreferrer noopener";
   });
-  body.querySelectorAll("input[type=checkbox]").forEach((box, i) => {
-    const task = p.tasks.filter((t) => t.line > 0)[i];
+  // Matched by line: a blockquoted box renders but is no task.
+  body.querySelectorAll("input[type=checkbox][data-line]").forEach((box) => {
+    const task = p.tasks.find((t) => t.line > 0 && t.line === Number(box.dataset.line));
     if (!task) return;
     box.disabled = false;
     box.addEventListener("change", () => setTask(task, box.checked ? "done" : "open"));

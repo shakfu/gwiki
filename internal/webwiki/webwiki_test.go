@@ -433,6 +433,54 @@ func TestSaveNewAndTask(t *testing.T) {
 	}
 }
 
+// The browser and the agent apply one rule to a write: see the MCP test of
+// the same name.
+func TestWebAndAgentApplyOneWriteRule(t *testing.T) {
+	f := newFixture(t)
+	var p pageResponse
+	f.get("/api/page?p=index", &p)
+
+	res := f.do("POST", "/api/save", map[string]any{"page": "index", "base": p.Hash, "text": "# Home\r\n\r\nCRLF.\r\n\n"})
+	var saved struct{ Hash string }
+	json.NewDecoder(res.Body).Decode(&saved)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK || f.source("index") != "# Home\n\nCRLF.\n" || saved.Hash != wiki.Hash([]byte(f.source("index"))) {
+		t.Fatalf("save: %s %q", res.Status, f.source("index"))
+	}
+
+	// A save without a base creates nothing.
+	res = f.do("POST", "/api/save", map[string]any{"page": "brand-new", "base": "", "text": "# New\n"})
+	res.Body.Close()
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("save without a base: %s", res.Status)
+	}
+	if _, _, err := f.w.Read("brand-new"); err == nil {
+		t.Fatal("a save without a base created a page")
+	}
+
+	// A checklist item is named by its text as well as its line.
+	f.write("plan", "# Plan\n\n- [ ] first\n")
+	f.w.Refresh()
+	res = f.do("POST", "/api/task", map[string]any{"page": "plan", "line": 3, "status": "done"})
+	res.Body.Close()
+	if res.StatusCode != http.StatusBadRequest || f.source("plan") != "# Plan\n\n- [ ] first\n" {
+		t.Fatalf("task without text: %s\n%s", res.Status, f.source("plan"))
+	}
+}
+
+// A blockquoted box renders but is no task; the line on each box keeps the
+// boxes after it matched to their own tasks.
+func TestCheckboxesNameTheirTaskLine(t *testing.T) {
+	f := newFixture(t)
+	f.write("plan", "# Plan\n\n> - [ ] quoted\n\n- [ ] real\n")
+	f.w.Refresh()
+	var p pageResponse
+	f.get("/api/page?p=plan", &p)
+	if len(p.Tasks) != 1 || p.Tasks[0].Line != 5 || !strings.Contains(p.HTML, `data-line="5"`) {
+		t.Fatalf("tasks %+v, html %s", p.Tasks, p.HTML)
+	}
+}
+
 func TestEventsFollowOutsideChanges(t *testing.T) {
 	f := newFixture(t)
 	req, _ := http.NewRequest("GET", f.http.URL+"/api/events?token=test-token-value", nil)

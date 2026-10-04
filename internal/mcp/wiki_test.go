@@ -126,6 +126,17 @@ func TestWikiCreateReadEditAndWrite(t *testing.T) {
 	}
 }
 
+// The agent and the browser apply one rule to a write: see the webwiki test of
+// the same name.
+func TestWebAndAgentApplyOneWriteRule(t *testing.T) {
+	f := newFixture(t)
+	f.page("notes", "# Notes\n")
+	out := f.mustCall("gwiki_write", map[string]any{"page": "notes", "base": wiki.Hash([]byte("# Notes\n")), "content": "# Notes\r\n\r\nCRLF.\r\n\n"})
+	if got := f.source("notes"); got != "# Notes\n\nCRLF.\n" || hashIn(t, out) != wiki.Hash([]byte(got)) {
+		t.Fatalf("write: %q\n%s", got, out)
+	}
+}
+
 func TestWikiSearchListAndRead(t *testing.T) {
 	f := newFixture(t)
 	f.page("index", "# Index\n\nSee [[Lexer]] and [code](../../main.go#L1) and [[Nowhere]].\n")

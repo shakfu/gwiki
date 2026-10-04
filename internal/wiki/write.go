@@ -189,7 +189,8 @@ func (w *Wiki) pageExists(page string) (bool, error) {
 // is replaced, so a failure to write one leaves all as they were. The renames
 // put new pages first and removals last: a move that stops part-way leaves the
 // page in both places, never in neither. An editor outside gwiki takes no lock;
-// the checks still refuse to overwrite what it saved first.
+// each page is checked again just before its rename, so what it saved first is
+// refused rather than overwritten, short of a save inside that last gap.
 func (w *Wiki) commit(writes []fileWrite) (Warnings, error) {
 	root, err := w.root()
 	if err != nil {
@@ -203,18 +204,8 @@ func (w *Wiki) commit(writes []fileWrite) (Warnings, error) {
 	defer tx.Rollback()
 
 	for _, fw := range writes {
-		current, err := readIn(root, fw.Page)
-		switch {
-		case os.IsNotExist(err):
-			if fw.Base != "" {
-				return Warnings{}, &ErrConflict{Page: fw.Page}
-			}
-		case err != nil:
+		if err := checkBase(root, fw); err != nil {
 			return Warnings{}, err
-		case fw.Base == "":
-			return Warnings{}, fmt.Errorf("%w: %s", ErrExists, fw.Page)
-		case Hash(current) != fw.Base:
-			return Warnings{}, &ErrConflict{Page: fw.Page, Current: current, CurrentHash: Hash(current)}
 		}
 	}
 
@@ -237,6 +228,14 @@ func (w *Wiki) commit(writes []fileWrite) (Warnings, error) {
 	}
 	done := 0
 	for i, fw := range writes {
+		if beforeRename != nil {
+			beforeRename(fw.Page)
+		}
+		// Checked again just before, since an editor outside gwiki may have
+		// saved while the batch was staged.
+		if err = checkBase(root, fw); err != nil {
+			break
+		}
 		if fw.Data == nil {
 			err = root.Remove(pageRel(fw.Page))
 		} else if err = root.Rename(temps[i], pageRel(fw.Page)); err == nil {
@@ -270,6 +269,28 @@ func (w *Wiki) commit(writes []fileWrite) (Warnings, error) {
 	}
 	return warn, nil
 }
+
+// checkBase refuses a write whose page is no longer what the writer read.
+func checkBase(root *os.Root, fw fileWrite) error {
+	current, err := readIn(root, fw.Page)
+	switch {
+	case os.IsNotExist(err):
+		if fw.Base != "" {
+			return &ErrConflict{Page: fw.Page}
+		}
+	case err != nil:
+		return err
+	case fw.Base == "":
+		return fmt.Errorf("%w: %s", ErrExists, fw.Page)
+	case Hash(current) != fw.Base:
+		return &ErrConflict{Page: fw.Page, Current: current, CurrentHash: Hash(current)}
+	}
+	return nil
+}
+
+// beforeRename, when set by a test, runs before each page is checked again and
+// replaced.
+var beforeRename func(page string)
 
 // writeOrder ranks a write: new pages, then changed pages, then removals.
 func writeOrder(fw fileWrite) int {

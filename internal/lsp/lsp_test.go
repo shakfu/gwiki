@@ -616,6 +616,19 @@ func TestSymbols(t *testing.T) {
 	}
 }
 
+// An empty heading has no line or name to show, so it is left out.
+func TestSymbolsSkipEmptyHeadings(t *testing.T) {
+	c := newClient(t)
+	uri := c.pageURI("orphan")
+	c.open(uri, "# A\n\n##\n\ntext\n\n#\n\n# D\n")
+	c.diagnostics(uri)
+	var syms []documentSymbol
+	c.mustCall("textDocument/documentSymbol", map[string]any{"textDocument": map[string]any{"uri": uri}}, &syms)
+	if len(syms) != 2 || syms[0].Name != "A" || len(syms[0].Children) != 0 || syms[0].Range.End.Line != 7 || syms[1].Name != "D" || syms[1].Range.Start.Line != 8 {
+		t.Fatalf("symbols = %+v", syms)
+	}
+}
+
 // apply performs a workspace edit on disk, as an editor would on save.
 func apply(t *testing.T, edit map[string]any) {
 	t.Helper()
@@ -711,6 +724,30 @@ func TestRename(t *testing.T) {
 	params["newName"] = "archive/"
 	if err := c2.call("textDocument/rename", params, nil); err == nil || !strings.Contains(err.Message, "gwiki mv") {
 		t.Fatalf("rename without file operations = %v", err)
+	}
+}
+
+// A buffer opened under another spelling of its URI still blocks a rename.
+func TestRenameSeesBuffersByPath(t *testing.T) {
+	for _, spell := range []func(string) string{
+		func(u string) string { return strings.Replace(u, "/index.md", "/%69ndex.md", 1) },
+		func(u string) string { return strings.Replace(u, "/.gwiki/", "/%2egwiki/", 1) },
+	} {
+		c := newClient(t)
+		index := spell(c.pageURI("index"))
+		c.open(index, pages["index"]+"\nunsaved\n")
+		c.diagnostics(index)
+		p := posOf(t, pages["index"], "Design sketch#Tokens", 2)
+		params := at(index, p.Line, p.Character)
+		params["newName"] = "archive/"
+		if err := c.call("textDocument/rename", params, nil); err == nil || !strings.Contains(err.Message, "unsaved changes") {
+			t.Fatalf("rename from %s over unsaved changes = %v", index, err)
+		}
+		c.notify("textDocument/didClose", map[string]any{"textDocument": map[string]any{"uri": c.pageURI("index")}})
+		c.diagnostics(c.pageURI("index"))
+		if err := c.call("textDocument/documentSymbol", map[string]any{"textDocument": map[string]any{"uri": index}}, nil); err == nil {
+			t.Fatalf("%s still open after closing it under another spelling", index)
+		}
 	}
 }
 

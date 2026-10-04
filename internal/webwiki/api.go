@@ -408,12 +408,8 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, http.StatusBadRequest)
 		return
 	}
-	text := strings.ReplaceAll(in.Text, "\r\n", "\n")
-	if !strings.HasSuffix(text, "\n") {
-		text += "\n"
-	}
 	var conflict *wiki.ErrConflict
-	warn, err := s.w.Write(id, []byte(text), in.Base)
+	hash, warn, err := s.w.Save(id, in.Text, in.Base)
 	switch {
 	case errors.As(err, &conflict):
 		writeStatus(w, http.StatusConflict, map[string]any{
@@ -425,7 +421,7 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.bump()
-	writeJSON(w, map[string]string{"hash": wiki.Hash([]byte(text)), "warning": warning(warn)})
+	writeJSON(w, map[string]string{"hash": hash, "warning": warning(warn)})
 }
 
 // warning is what a write that landed left wrong, or empty.
@@ -480,28 +476,21 @@ func (s *Server) handleTask(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, http.StatusBadRequest)
 		return
 	}
-	tasks, err := s.w.Tasks(wiki.TaskFilter{Page: id})
+	var changed *wiki.ErrTaskChanged
+	t, err := s.w.TaskAt(id, in.Line, in.Text)
+	switch {
+	case errors.As(err, &changed):
+		fail(w, err, http.StatusConflict)
+		return
+	case err != nil:
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	warn, err := s.w.SetTaskStatus(t, in.Status)
 	if err != nil {
-		fail(w, err, http.StatusInternalServerError)
+		fail(w, err, http.StatusConflict)
 		return
 	}
-	for _, t := range tasks {
-		if t.Line != in.Line {
-			continue
-		}
-		// The text guards against a line that now holds another item.
-		if in.Text != "" && strings.TrimSpace(in.Text) != t.Text {
-			fail(w, errors.New("that line now holds "+strconv.Quote(t.Text)+"; reload the page"), http.StatusConflict)
-			return
-		}
-		warn, err := s.w.SetTaskStatus(t, in.Status)
-		if err != nil {
-			fail(w, err, http.StatusConflict)
-			return
-		}
-		s.bump()
-		writeJSON(w, map[string]string{"status": in.Status, "warning": warning(warn)})
-		return
-	}
-	fail(w, errors.New("no task on that line"), http.StatusNotFound)
+	s.bump()
+	writeJSON(w, map[string]string{"status": in.Status, "warning": warning(warn)})
 }

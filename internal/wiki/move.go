@@ -79,14 +79,6 @@ func (w *Wiki) PlanMove(from, to string) (*MovePlan, error) {
 		return nil, fmt.Errorf("%w: %s", ErrExists, to)
 	}
 
-	ix, err := w.readIndex()
-	if err != nil {
-		return nil, err
-	}
-	ix.removeEntry(from, info.Title)
-	ix.addEntry(to, info.Title)
-	ix.slugs[to] = ix.slugs[from]
-
 	plan := &MovePlan{From: from, To: to, Edits: []Edit{}, Unrewritten: []Link{}}
 	sources := map[string]*pageSource{}
 	load := func(page string) (*pageSource, error) {
@@ -101,6 +93,23 @@ func (w *Wiki) PlanMove(from, to string) (*MovePlan, error) {
 		sources[page] = ps
 		return ps, nil
 	}
+	own, err := load(from)
+	if err != nil {
+		return nil, err
+	}
+	// An untitled page is titled by its file name, which the move changes.
+	title := info.Title
+	if markdown.Parse(own.src).Title == "" {
+		title = pageName(to)
+	}
+	ix, err := w.readIndex()
+	if err != nil {
+		return nil, err
+	}
+	ix.removeEntry(from, info.Title)
+	ix.addEntry(to, title)
+	ix.slugs[to] = ix.slugs[from]
+
 	seen := map[string]bool{}
 	add := func(page, editPage string, l Link, ps *pageSource, repl string) {
 		old := string(ps.src[l.DestStart:l.DestEnd])
@@ -108,7 +117,9 @@ func (w *Wiki) PlanMove(from, to string) (*MovePlan, error) {
 		plan.Edits = append(plan.Edits, Edit{Page: editPage, Line: l.Line, Old: old, New: repl, Start: l.DestStart, End: l.DestEnd})
 	}
 
-	incoming, err := w.links(`resolved = ? AND kind IN ('page', 'heading') AND page != ?`, from, from)
+	// The page's own wiki links to itself are rewritten as incoming ones; [[#x]]
+	// names the page it is on and needs no edit.
+	incoming, err := w.links(`resolved = ? AND kind IN ('page', 'heading') AND (page != ? OR form = 'wiki' AND target != '')`, from, from)
 	if err != nil {
 		return nil, err
 	}
@@ -145,13 +156,13 @@ func (w *Wiki) PlanMove(from, to string) (*MovePlan, error) {
 		} else {
 			repl = w.markdownDest(ps.src, l, l.Page, w.file(to), false)
 		}
-		add(l.Page, l.Page, l, ps, repl)
+		editPage := l.Page
+		if editPage == from {
+			editPage = to
+		}
+		add(l.Page, editPage, l, ps, repl)
 	}
 
-	own, err := load(from)
-	if err != nil {
-		return nil, err
-	}
 	outgoing, err := w.links(`page = ? AND form = 'markdown' AND kind IN ('page', 'heading', 'file', 'line') AND status != ?`, from, StatusOutsideRepo)
 	if err != nil {
 		return nil, err

@@ -2,11 +2,13 @@ package markdown
 
 import (
 	"bytes"
+	"strconv"
 	"strings"
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
+	extast "github.com/yuin/goldmark/extension/ast"
 	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/renderer"
 	"github.com/yuin/goldmark/renderer/html"
@@ -51,7 +53,8 @@ func HTML(src []byte, resolve func(Link) Target) ([]byte, error) {
 		goldmark.WithParserOptions(parser.WithASTTransformers(
 			util.Prioritized(&linkTransformer{resolve: resolve, src: doc}, 100))),
 		goldmark.WithRendererOptions(renderer.WithNodeRenderers(
-			util.Prioritized(&wikiRenderer{resolve: resolve}, 100))),
+			util.Prioritized(&wikiRenderer{resolve: resolve}, 100),
+			util.Prioritized(checkBoxRenderer{}, 100))),
 	)
 	var buf bytes.Buffer
 	if err := md.Convert(doc, &buf); err != nil {
@@ -143,4 +146,30 @@ func (r *wikiRenderer) render(w util.BufWriter, source []byte, node ast.Node, en
 	w.Write(util.EscapeHTML([]byte(n.Label)))
 	w.WriteString(`</a>`)
 	return ast.WalkSkipChildren, nil
+}
+
+// checkBoxRenderer draws a checkbox with its source line, which the browser
+// matches to a task: a blockquoted box renders but is no task, so order is not
+// enough.
+type checkBoxRenderer struct{}
+
+func (checkBoxRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
+	reg.Register(extast.KindTaskCheckBox, renderCheckBox)
+}
+
+func renderCheckBox(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
+	if !entering {
+		return ast.WalkContinue, nil
+	}
+	if node.(*extast.TaskCheckBox).IsChecked {
+		w.WriteString(`<input checked="" disabled="" type="checkbox"`)
+	} else {
+		w.WriteString(`<input disabled="" type="checkbox"`)
+	}
+	if block, ok := node.Parent().(interface{ Lines() *text.Segments }); ok && block.Lines().Len() > 0 {
+		line := bytes.Count(source[:block.Lines().At(0).Start], []byte("\n")) + 1
+		w.WriteString(` data-line="` + strconv.Itoa(line) + `"`)
+	}
+	w.WriteString("> ")
+	return ast.WalkContinue, nil
 }

@@ -12,6 +12,7 @@ const (
 	done result = iota
 	needMore
 	bad
+	empty // an operator's motion covers no text
 )
 
 // changeCommands begin a change, so "." can repeat them.
@@ -35,10 +36,6 @@ func (e *Editor) normalKey(k string) {
 	e.Message = ""
 	e.pending = append(e.pending, k)
 	if r := e.parse(); r != needMore {
-		if e.changing && e.Mode != Insert && e.Mode != Replace && !e.replaying {
-			e.lastChange = e.seq
-			e.changing = false
-		}
 		e.pending = nil
 	}
 }
@@ -107,7 +104,7 @@ func (e *Editor) run(keys []string, count int, reg rune) result {
 		keys = keys[1:]
 	}
 	if !e.replaying && changeCommands[head] {
-		e.changing, e.seq = true, append([]string{}, e.pending...)
+		e.changing, e.seq, e.changeFrom = true, append([]string{}, e.pending...), e.Buf.edits
 	}
 
 	switch head {
@@ -115,6 +112,9 @@ func (e *Editor) run(keys []string, count int, reg rune) result {
 	case "d", "c", "y", ">", "<", "gu", "gU", "g~":
 		if visual {
 			a, z, _ := e.Selection()
+			if e.changing && !e.replaying {
+				e.seq = append(e.visualKeys(a, z), e.pending...)
+			}
 			e.applyOperator(head, a, z, e.Mode == VisualLine, reg)
 			return done
 		}
@@ -129,6 +129,10 @@ func (e *Editor) run(keys []string, count int, reg rune) result {
 			return done
 		}
 		a, z, linewise, r := e.opRange(head, rest, atLeast(count))
+		if r == empty {
+			e.emptyOperator(head)
+			return done
+		}
 		if r != done {
 			return r
 		}
@@ -429,6 +433,8 @@ func (e *Editor) applyOperator(op string, a, z Pos, linewise bool, reg rune) {
 		e.setMessage(count(strings.Count(text, "\n"), "line") + " yanked")
 	case "d", "c":
 		e.yank(reg, text, linewise)
+		// c and the insert that follows are one undo step.
+		e.holding = op == "c"
 		e.change(func() {
 			if linewise && op == "d" {
 				// The newline goes with the lines, unless they are the last.
@@ -443,7 +449,6 @@ func (e *Editor) applyOperator(op string, a, z Pos, linewise bool, reg rune) {
 		})
 		if op == "c" {
 			e.Mode = Normal
-			e.holding = true
 			e.startInsert(Insert)
 		} else if e.Mode == Visual || e.Mode == VisualLine {
 			e.Mode = Normal
@@ -453,7 +458,10 @@ func (e *Editor) applyOperator(op string, a, z Pos, linewise bool, reg rune) {
 		if op == "<" {
 			n = -1
 		}
-		e.change(func() { e.indent(a.Line, z.Line, n) })
+		e.change(func() {
+			e.Cursor.Line = a.Line // vim leaves the cursor on the first line shifted
+			e.indent(a.Line, z.Line, n)
+		})
 		e.Mode = leaveVisual(e.Mode)
 	case "gu", "gU", "g~":
 		e.change(func() {
@@ -462,6 +470,41 @@ func (e *Editor) applyOperator(op string, a, z Pos, linewise bool, reg rune) {
 		})
 		e.Mode = leaveVisual(e.Mode)
 	}
+}
+
+// emptyOperator is an operator over an exclusive motion that did not move,
+// which covers no text: c still inserts, and a shift still takes the line.
+func (e *Editor) emptyOperator(op string) {
+	switch op {
+	case "c":
+		e.startInsert(Insert)
+	case ">", "<":
+		e.applyOperator(op, e.Cursor, e.Cursor, true, 0)
+	}
+}
+
+// visualKeys select, from the cursor, as much as the selection a to z: the
+// same number of lines, and on the last line the same column, or the same
+// number of characters within one line. "." replays them before the operator.
+func (e *Editor) visualKeys(a, z Pos) []string {
+	digits := func(n int) []string { return strings.Split(itoa(n), "") }
+	n := z.Line - a.Line
+	if e.Mode == VisualLine {
+		keys := []string{"V"}
+		if n > 0 {
+			keys = append(append(keys, digits(n)...), "j")
+		}
+		return keys
+	}
+	keys, cols := []string{"v"}, z.Col-a.Col
+	if n > 0 {
+		keys = append(append(keys, digits(n)...), "j", "0")
+		cols = z.Col
+	}
+	if cols > 0 {
+		keys = append(append(keys, digits(cols)...), "l")
+	}
+	return keys
 }
 
 func leaveVisual(m Mode) Mode {

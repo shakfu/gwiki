@@ -199,17 +199,18 @@ func (m *WikiModel) taskCells(t wiki.Task) []cell {
 func (m *WikiModel) dueCell(due string, done bool) cell {
 	today := m.now().Format("2006-01-02")
 	soon := m.now().AddDate(0, 0, 7).Format("2006-01-02")
+	shown := display.Line(due)
 	switch {
 	case due == "":
 		return nil
 	case done:
-		return text(due, styleDim)
+		return text(shown, styleDim)
 	case due < today:
-		return text(due+" ✗", styleError)
+		return text(shown+" ✗", styleError)
 	case due <= soon:
-		return text(due, styleWarn)
+		return text(shown, styleWarn)
 	}
-	return text(due, styleDim)
+	return text(shown, styleDim)
 }
 
 func (m *WikiModel) viewTasks() []string {

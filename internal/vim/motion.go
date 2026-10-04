@@ -3,6 +3,10 @@ package vim
 import (
 	"regexp"
 	"strings"
+
+	"github.com/charmbracelet/x/ansi"
+
+	"github.com/shakfu/gwiki/internal/display"
 )
 
 // motion returns where a movement lands. linewise and inclusive describe the
@@ -200,6 +204,9 @@ func (e *Editor) opRange(op string, keys []string, count int) (Pos, Pos, bool, r
 	}
 	a, z := sorted(cur, target)
 	if !inclusive {
+		if a == z {
+			return a, z, false, empty
+		}
 		// An exclusive motion stops one short of its target.
 		if z.Col > 0 {
 			z.Col--
@@ -559,30 +566,67 @@ func (e *Editor) displayLine(down bool, n int) Pos {
 	width := max(1, e.Width)
 	p := e.Cursor
 	for i := 0; i < n; i++ {
-		rows := Wrap(e.Buf.Line(p.Line), width)
+		line := e.Buf.Line(p.Line)
+		rows := Wrap(line, width)
 		row := rowOf(rows, p.Col)
-		offset := p.Col - rows[row]
+		offset := columns(line[rows[row]:min(p.Col, len(line))])
 		switch {
 		case down && row+1 < len(rows):
-			p.Col = min(rows[row+1]+offset, len(e.Buf.Line(p.Line)))
+			p.Col = atColumn(line, rows[row+1], offset)
 		case down:
 			if p.Line+1 >= e.Buf.Lines() {
 				return p
 			}
-			p = Pos{p.Line + 1, offset}
+			p = Pos{p.Line + 1, atColumn(e.Buf.Line(p.Line+1), 0, offset)}
 		case row > 0:
-			p.Col = rows[row-1] + offset
+			p.Col = atColumn(line, rows[row-1], offset)
 		default:
 			if p.Line == 0 {
 				return p
 			}
 			p.Line--
 			last := Wrap(e.Buf.Line(p.Line), width)
-			p.Col = last[len(last)-1] + offset
+			p.Col = atColumn(e.Buf.Line(p.Line), last[len(last)-1], offset)
 		}
 		p = e.Buf.clamp(p, false)
 	}
 	return p
+}
+
+// atColumn is the rune that covers a screen column of the row starting at
+// start, or the last rune when the row is narrower.
+func atColumn(line []rune, start, col int) int {
+	i := start
+	for used := 0; i < len(line); i++ {
+		if used += runeWidth(line[i]); used > col {
+			break
+		}
+	}
+	return i
+}
+
+// tabWidth is the columns a tab takes; the host draws it as four spaces.
+const tabWidth = 4
+
+// runeWidth is the columns a rune takes as the host draws it: a control
+// character is drawn as '?'.
+func runeWidth(r rune) int {
+	switch {
+	case r == '\t':
+		return tabWidth
+	case display.Control(r):
+		return 1
+	}
+	return ansi.StringWidth(string(r))
+}
+
+// columns is the screen width of runes.
+func columns(runes []rune) int {
+	n := 0
+	for _, r := range runes {
+		n += runeWidth(r)
+	}
+	return n
 }
 
 func rowOf(rows []int, col int) int {
@@ -595,27 +639,31 @@ func rowOf(rows []int, col int) int {
 	return row
 }
 
-// Wrap returns the column each display row of a line starts at, breaking at
-// spaces where it can. The host draws lines the same way.
+// Wrap returns the rune each display row of a line starts at, fitting each
+// row in width screen columns and breaking at spaces where it can. The host
+// draws lines the same way.
 func Wrap(line []rune, width int) []int {
 	rows := []int{0}
 	if width <= 0 {
 		return rows
 	}
-	start := 0
-	for start+width < len(line) {
-		brk := -1
-		for i := start + width; i > start; i-- {
-			if isSpace(line[i-1]) {
-				brk = i
+	start, used := 0, 0
+	for i := 0; i < len(line); i++ {
+		w := runeWidth(line[i])
+		if used+w <= width || i == start {
+			used += w // a rune wider than the row takes a row of its own
+			continue
+		}
+		brk := i
+		for j := i; j > start; j-- {
+			if isSpace(line[j-1]) {
+				brk = j
 				break
 			}
 		}
-		if brk <= start {
-			brk = start + width
-		}
 		rows = append(rows, brk)
-		start = brk
+		start, used = brk, columns(line[brk:i])
+		i-- // place line[i] again on the new row
 	}
 	return rows
 }

@@ -715,3 +715,151 @@ func TestAWriteThatLandsWithAStaleCacheSucceedsWithAWarning(t *testing.T) {
 		t.Fatalf("new-page = %q", got)
 	}
 }
+
+// A task listed before the page shrank names an offset past its end.
+func TestPromoteRefusesATaskPastThePageEnd(t *testing.T) {
+	w, root := emptyWiki(t)
+	put(t, w, root, map[string]string{"plan": "# Plan\n\n- [ ] first\n- [ ] a much longer second item\n"})
+	item, err := w.FindTask("plan:4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, hash, _ := w.Read("plan")
+	if _, err := w.Write("plan", []byte("# Plan\n"), hash); err != nil {
+		t.Fatal(err)
+	}
+	var conflict *ErrConflict
+	if _, _, err := w.Promote(item, "tasks"); !errors.As(err, &conflict) {
+		t.Fatalf("Promote = %v, want a conflict", err)
+	}
+	if _, err := w.SetTaskStatus(item, "done"); !errors.As(err, &conflict) {
+		t.Fatalf("SetTaskStatus = %v, want a conflict", err)
+	}
+}
+
+// The cache is current, but the box the task names now holds another item.
+func TestTaskEditsRefuseAnotherItemAtTheSameOffset(t *testing.T) {
+	w, root := emptyWiki(t)
+	put(t, w, root, map[string]string{"plan": "# Plan\n\n- [ ] aaaa\n- [ ] bbbb\n"})
+	item, err := w.FindTask("plan:4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := "# Plan\n\n- [ ] aaaa\n- [ ] cccc\n"
+	_, hash, _ := w.Read("plan")
+	if _, err := w.Write("plan", []byte(changed), hash); err != nil {
+		t.Fatal(err)
+	}
+	var conflict *ErrConflict
+	if _, err := w.SetTaskStatus(item, "done"); !errors.As(err, &conflict) {
+		t.Fatalf("SetTaskStatus = %v, want a conflict", err)
+	}
+	if _, _, err := w.Promote(item, "tasks"); !errors.As(err, &conflict) {
+		t.Fatalf("Promote = %v, want a conflict", err)
+	}
+	if got := source(t, root, "plan"); got != changed {
+		t.Fatalf("plan was written:\n%s", got)
+	}
+}
+
+// A status set from a stale listing would undo another writer's change.
+func TestSetTaskStatusRefusesAStatusChangedSinceListing(t *testing.T) {
+	w, root := emptyWiki(t)
+	put(t, w, root, map[string]string{
+		"plan": "# Plan\n\n- [ ] item\n",
+		"ship": "---\ntitle: Ship\ntype: task\nstatus: open\n---\n",
+	})
+	item, _ := w.FindTask("plan:3")
+	page, _ := w.FindTask("ship")
+	for id, out := range map[string]string{"plan": "# Plan\n\n- [x] item\n", "ship": "---\ntitle: Ship\ntype: task\nstatus: done\n---\n"} {
+		_, hash, _ := w.Read(id)
+		if _, err := w.Write(id, []byte(out), hash); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var conflict *ErrConflict
+	if _, err := w.SetTaskStatus(item, "open"); !errors.As(err, &conflict) {
+		t.Fatalf("SetTaskStatus(item, open) = %v, want a conflict", err)
+	}
+	if _, err := w.SetTaskStatus(page, "doing"); !errors.As(err, &conflict) {
+		t.Fatalf("SetTaskStatus(page, doing) = %v, want a conflict", err)
+	}
+	// The status asked for is already there: nothing to do.
+	if _, err := w.SetTaskStatus(item, "done"); err != nil {
+		t.Fatalf("SetTaskStatus(item, done) = %v", err)
+	}
+	if _, err := w.SetTaskStatus(page, "done"); err != nil {
+		t.Fatalf("SetTaskStatus(page, done) = %v", err)
+	}
+	if got := source(t, root, "ship"); !strings.Contains(got, "status: done") {
+		t.Fatalf("ship:\n%s", got)
+	}
+}
+
+// An editor outside gwiki takes no lock; a save after the base check but
+// before the rename must still not be overwritten.
+func TestAWriteRechecksThePageBeforeTheRename(t *testing.T) {
+	w, root := emptyWiki(t)
+	put(t, w, root, map[string]string{"a": "# A\n"})
+	_, hash, _ := w.Read("a")
+	outside := "# A\n\nsaved by an editor\n"
+	beforeRename = func(page string) { write(t, pageFile(root, page), outside) }
+	t.Cleanup(func() { beforeRename = nil })
+
+	var conflict *ErrConflict
+	if _, err := w.Write("a", []byte("# A\n\nmine\n"), hash); !errors.As(err, &conflict) {
+		t.Fatalf("Write = %v, want a conflict", err)
+	}
+	if got := source(t, root, "a"); got != outside {
+		t.Fatalf("a = %q, want the outside save", got)
+	}
+}
+
+// A save replaces a page the writer read; a new page is created instead.
+func TestASaveNeedsABaseAndNormalizesText(t *testing.T) {
+	w, root := emptyWiki(t)
+	if _, _, err := w.Save("new", "# New\n", ""); !errors.Is(err, ErrNoBase) {
+		t.Fatalf("Save = %v, want ErrNoBase", err)
+	}
+	if _, err := os.Stat(pageFile(root, "new")); !os.IsNotExist(err) {
+		t.Fatalf("the page was created: %v", err)
+	}
+	put(t, w, root, map[string]string{"a": "# A\n"})
+	_, base, _ := w.Read("a")
+	hash, _, err := w.Save("a", "# A\r\n\r\nB\r\n\n", base)
+	if got := source(t, root, "a"); err != nil || got != "# A\n\nB\n" || hash != Hash([]byte(got)) {
+		t.Fatalf("Save = %q, %v; a = %q", hash, err, got)
+	}
+	for in, want := range map[string]string{"# A": "# A\n", "# A\n\n\n": "# A\n", "": "\n"} {
+		if got := string(normalizeSource(in)); got != want {
+			t.Errorf("normalizeSource(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestTaskAtNamesATaskAsListed(t *testing.T) {
+	w, root := emptyWiki(t)
+	put(t, w, root, map[string]string{
+		"plan": "# Plan\n\n- [ ] first\n",
+		"ship": "---\ntitle: Ship\ntype: task\n---\n",
+	})
+	if got, err := w.TaskAt("plan", 3, " first "); err != nil || got.Box == 0 || got.Text != "first" {
+		t.Fatalf("TaskAt(plan, 3) = %+v, %v", got, err)
+	}
+	if _, err := w.TaskAt("plan", 3, ""); err == nil || !strings.Contains(err.Error(), "item's text") {
+		t.Fatalf("TaskAt without text = %v", err)
+	}
+	var changed *ErrTaskChanged
+	if _, err := w.TaskAt("plan", 3, "second"); !errors.As(err, &changed) || !strings.Contains(err.Error(), `now holds "first"`) {
+		t.Fatalf("TaskAt with other text = %v", err)
+	}
+	if _, err := w.TaskAt("plan", 9, "first"); err == nil || errors.As(err, &changed) {
+		t.Fatalf("TaskAt on an empty line = %v", err)
+	}
+	if got, err := w.TaskAt("ship", 0, ""); err != nil || got.Line != 0 || got.Text != "Ship" {
+		t.Fatalf("TaskAt(ship) = %+v, %v", got, err)
+	}
+	if _, err := w.TaskAt("plan", 0, ""); err == nil || !strings.Contains(err.Error(), "not a task page") {
+		t.Fatalf("TaskAt(plan, 0) = %v", err)
+	}
+}

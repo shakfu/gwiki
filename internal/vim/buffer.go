@@ -37,6 +37,10 @@ type Buffer struct {
 
 	// open is the group being recorded, nil between commands.
 	open *group
+
+	// edits counts replacements, so "." can tell whether a command changed
+	// anything.
+	edits int
 }
 
 // change is one replacement of text, and the cursor around it.
@@ -163,6 +167,7 @@ func (b *Buffer) Replace(a, z Pos, text string) Pos {
 	if removed == "" && text == "" {
 		return a
 	}
+	b.edits++
 	if b.open != nil {
 		b.open.changes = append(b.open.changes, change{at: a, removed: removed, inserted: text})
 	}

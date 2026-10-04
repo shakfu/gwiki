@@ -14,7 +14,7 @@ Pages are plain files, so any editor works. gwiki adds:
 
 - a command line for all of the above.
 
-All of it is one executable. A write of a page's whole text, from the editor, the browser or an agent, checks that the page has not changed since it was read, and refuses rather than overwrite. A command that changes part of a page, such as `edit -m`, a tag, a task's status or a link repair, applies it to the page as it is when the command runs.
+All of it is one executable. A write of a page's whole text, from the editor, the browser or an agent, checks that the page has not changed since it was read, and refuses rather than overwrite. A command that changes part of a page, such as `edit -m` or a tag, applies it to the page as it is when the command runs. A task's status and a link repair are refused when the item, its status or the link is no longer what was listed.
 
 ![The gwiki overview on the latest tab: pages listed by title, path and when they changed](https://raw.githubusercontent.com/shakfu/gwiki/main/docs/media/gwiki-latest.png)
 
