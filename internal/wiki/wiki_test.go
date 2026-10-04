@@ -568,7 +568,7 @@ func TestRecentReadsGit(t *testing.T) {
 		}
 	}
 	git("init", "-q")
-	put(t, w, root, map[string]string{"committed": "# Committed\n", "edited": "# Edited\n"})
+	put(t, w, root, map[string]string{"committed": "# Committed\n", "edited": "# Edited\n", "caf\u00e9": "# Caf\u00e9\n"})
 	git("add", ".gwiki/wiki")
 	git("commit", "-q", "-m", "pages")
 	put(t, w, root, map[string]string{"edited": "# Edited again\n", "new": "# New\n"})
@@ -583,6 +583,9 @@ func TestRecentReadsGit(t *testing.T) {
 	}
 	if c := by["committed"]; c.Author != "Ada" || c.Committed.IsZero() || c.Uncommitted {
 		t.Errorf("committed = %+v", c)
+	}
+	if c := by["caf\u00e9"]; c.Author != "Ada" || c.Committed.IsZero() || c.Uncommitted {
+		t.Errorf("caf\u00e9 = %+v", c)
 	}
 	if c := by["edited"]; c.Author != "Ada" || !c.Uncommitted {
 		t.Errorf("edited = %+v", c)

@@ -47,10 +47,14 @@ func (in *input) insert(r rune) {
 	in.cursor++
 }
 
-// insertString types several runes at the cursor, for a paste.
+// insertString types several runes at the cursor, for a paste. The field is
+// one line, so a line break or tab becomes a space and other controls are left out.
 func (in *input) insertString(s string) {
+	s = strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ", "\t", " ").Replace(s)
 	for _, r := range s {
-		in.insert(r)
+		if !display.Control(r) {
+			in.insert(r)
+		}
 	}
 }
 

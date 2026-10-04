@@ -123,6 +123,11 @@ func TestOperators(t *testing.T) {
 		{name: "3J", text: "@one\ntwo\nthree\n", keys: "3J", want: "one two three\n"},
 		{name: "r", text: "@abc\n", keys: "rx", want: "xbc\n"},
 		{name: "3r", text: "@abc\n", keys: "3rx", want: "xxx\n"},
+		{name: "r tab", text: "@ab\n", keys: "r<tab>", want: "\tb\n"},
+		{name: "r space", text: "@ab\n", keys: "r<space>", want: " b\n"},
+		{name: "3r enter is one line break", text: "@abcdef\n", keys: "3r<enter>", want: "\ndef\n", at: Pos{1, 0}},
+		{name: "f tab", text: "@xa\tb\n", keys: "f<tab>x", want: "xab\n"},
+		{name: "f space", text: "@xa b\n", keys: "f<space>x", want: "xab\n"},
 		{name: "tilde", text: "@abc\n", keys: "2~", want: "ABc\n", at: Pos{0, 2}},
 		{name: "shift right", text: "@one\ntwo\n", keys: ">>", want: "  one\ntwo\n"},
 		{name: "shift left", text: "    @one\n", keys: "<<", want: "  one\n"},
@@ -177,6 +182,7 @@ func TestInsertMode(t *testing.T) {
 		{name: "R backspace restores", text: "@abcd\n", keys: "RXY<backspace><backspace><esc>", want: "abcd\n"},
 		{name: "checkbox toggles", text: "- [ ] tid@y\n", keys: "<ctrl+@>", want: "- [x] tidy\n"},
 		{name: "checkbox toggles back", text: "- [x] tid@y\n", keys: "<ctrl+@>", want: "- [ ] tidy\n"},
+		{name: "checkbox toggles its own box", text: "- [x] done [ ] oth@er\n", keys: "<ctrl+@>", want: "- [ ] done [ ] other\n"},
 	})
 }
 
@@ -230,6 +236,15 @@ func TestSearchAndEx(t *testing.T) {
 		{name: "substitute the file", text: "@a\na\n", keys: ":%s/a/b/g<enter>", want: "b\nb\n"},
 		{name: "substitute a group", text: "@one two\n", keys: `:s/(\w+) (\w+)/\2 \1<enter>`, want: "two one\n"},
 		{name: "substitute a visual range", text: "@a\na\na\n", keys: "Vj:s/a/b<enter>", want: "b\nb\na\n"},
+		{name: "substitute sees the whole line", text: "@ab b\n", keys: `:s/\Bb/X/g<enter>`, want: "aX b\n"},
+		{name: "substitute a line break over a range", text: "@a\na\n", keys: `:%s/a/x\ny/<enter>`, want: "x\ny\nx\ny\n"},
+		{name: "substitute with another delimiter", text: "@a/b\n", keys: ":s#/#-#<enter>", want: "a-b\n"},
+		{name: "substitute with a bang delimiter", text: "@a/b\n", keys: ":s!/!-!<enter>", want: "a-b\n"},
+		{name: "substitute rejects a quote delimiter", text: "@ab\n", keys: `:s"a"x"<enter>`, want: "ab\n", check: func(t *testing.T, e *Editor) {
+			if !e.Err {
+				t.Errorf("message = %q, want an error", e.Message)
+			}
+		}},
 		{name: "goto line", text: "@one\ntwo\nthree\n", keys: ":2<enter>", at: Pos{1, 0}},
 		{name: "unknown command", text: "@x\n", keys: ":nope<enter>", check: func(t *testing.T, e *Editor) {
 			if !e.Err || !strings.Contains(e.Message, "not a command") {

@@ -17,7 +17,7 @@ import (
 // 5: a checklist item's text no longer holds its due: date.
 // 6: skipped lists the files a refresh left out.
 // 7: files records the inode change time.
-const schemaVersion = 7
+const schemaVersion = 8 // 8: markdown link destinations decoded; empty headings keep their line.
 
 // busyTimeout is how long, in milliseconds, a connection waits for another
 // writer's lock.

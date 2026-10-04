@@ -449,7 +449,10 @@ func (e *Editor) paragraph(forward bool, n int) Pos {
 
 // find is f, F, t and T on the cursor's line.
 func (e *Editor) find(cmd, target string, n int, repeat bool) (Pos, bool) {
-	r := firstRune(target)
+	r, ok := keyChar(target)
+	if !ok || r == '\n' {
+		return e.Cursor, false
+	}
 	line := e.Buf.Line(e.Cursor.Line)
 	col := e.Cursor.Col
 	forward := cmd == "f" || cmd == "t"
@@ -605,15 +608,15 @@ func atColumn(line []rune, start, col int) int {
 	return i
 }
 
-// tabWidth is the columns a tab takes; the host draws it as four spaces.
-const tabWidth = 4
+// TabWidth is the columns a tab takes; the host draws it as that many spaces.
+const TabWidth = 4
 
 // runeWidth is the columns a rune takes as the host draws it: a control
 // character is drawn as '?'.
 func runeWidth(r rune) int {
 	switch {
 	case r == '\t':
-		return tabWidth
+		return TabWidth
 	case display.Control(r):
 		return 1
 	}

@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"runtime/debug"
 	"strings"
 
 	"github.com/shakfu/gwiki/internal/wiki"
@@ -107,6 +108,13 @@ func (s *Server) Serve(in io.Reader, out io.Writer, logw io.Writer) error {
 		if err == io.EOF {
 			return nil
 		}
+		if errors.Is(err, errFrameTooLarge) {
+			fmt.Fprintf(s.logw, "gwiki mcp: %v\n", err)
+			s.send(response{JSONRPC: "2.0", ID: json.RawMessage("null"), Error: &rpcError{
+				Code: codeInvalidRequest, Message: err.Error(),
+			}})
+			continue
+		}
 		if err != nil {
 			return fmt.Errorf("read: %w", err)
 		}
@@ -136,21 +144,36 @@ func (s *Server) Serve(in io.Reader, out io.Writer, logw io.Writer) error {
 	}
 }
 
-// readLine reads one newline-delimited frame.
-//
-// bufio.Scanner would be simpler but caps a token at its buffer size, and a
-// tools/call carrying a long page body legitimately exceeds any fixed cap. A
-// Reader grows to whatever arrives.
+// maxFrame bounds a frame, so a client cannot make the server allocate without
+// limit. A var so tests can lower it.
+var maxFrame = 64 << 20
+
+var errFrameTooLarge = fmt.Errorf("a frame must be at most %d MB", maxFrame>>20)
+
+// readLine reads one newline-delimited frame. A frame over maxFrame is read to
+// its end and discarded, and errFrameTooLarge returned, so the next one is read.
 func readLine(r *bufio.Reader) ([]byte, error) {
 	var full []byte
+	over := false
 	for {
 		chunk, more, err := r.ReadLine()
-		full = append(full, chunk...)
+		if !over && len(full)+len(chunk) > maxFrame {
+			over, full = true, nil
+		}
+		if !over {
+			full = append(full, chunk...)
+		}
 		if err != nil {
-			if err == io.EOF && len(full) > 0 {
+			switch {
+			case err == io.EOF && over:
+				return nil, errFrameTooLarge
+			case err == io.EOF && len(full) > 0:
 				return full, nil
 			}
 			return nil, err
+		}
+		if !more && over {
+			return nil, errFrameTooLarge
 		}
 		if !more {
 			return full, nil
@@ -174,7 +197,7 @@ func (s *Server) handle(msg message) {
 			fmt.Fprintf(s.logw, "gwiki mcp: ignored %q sent without an id\n", msg.Method)
 			return
 		}
-		if _, err := s.dispatch(msg.Method, msg.Params); err != nil {
+		if _, err := s.call(msg.Method, msg.Params); err != nil {
 			fmt.Fprintf(s.logw, "gwiki mcp: %s: %v\n", msg.Method, err)
 		}
 		return
@@ -189,7 +212,7 @@ func (s *Server) handle(msg message) {
 		return
 	}
 
-	result, err := s.dispatch(msg.Method, msg.Params)
+	result, err := s.call(msg.Method, msg.Params)
 	if err == nil && result == nil {
 		// A response carries a result or an error; an empty object stands in
 		// for a method with nothing to return.
@@ -235,6 +258,18 @@ func validID(id json.RawMessage) bool {
 		return true
 	}
 	return false
+}
+
+// call dispatches a method, turning a panic into an internal error that is
+// logged with its stack, so one bad request does not end the session.
+func (s *Server) call(method string, params json.RawMessage) (result any, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(s.logw, "gwiki mcp: %s: panic: %v\n%s", method, r, debug.Stack())
+			result, err = nil, &rpcError{Code: codeInternal, Message: fmt.Sprintf("internal error: %v", r)}
+		}
+	}()
+	return s.dispatch(method, params)
 }
 
 // dispatch routes a method to its handler. A nil result with a nil error means

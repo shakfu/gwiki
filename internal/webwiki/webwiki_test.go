@@ -3,6 +3,7 @@ package webwiki
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -378,6 +379,78 @@ func TestFileView(t *testing.T) {
 	}
 }
 
+// Only a file some page links to is served, so the browser view cannot read
+// secrets, the git config or the cache.
+func TestOnlyLinkedFilesAreServed(t *testing.T) {
+	f := newFixture(t)
+	f.writeFile(filepath.Join(f.root, ".env"), "SECRET=1\n")
+	f.writeFile(filepath.Join(f.root, ".git", "config"), "[core]\n")
+	f.writeFile(filepath.Join(f.root, "src", "other.go"), "package lexer\n")
+	for _, path := range []string{".env", ".git/config", ".gwiki/cache.db", ".gwiki/wiki/index.md", "src/other.go", "src"} {
+		res := f.do("GET", "/api/file?p="+path, nil)
+		res.Body.Close()
+		if res.StatusCode != http.StatusNotFound {
+			t.Errorf("%s: %s, want 404", path, res.Status)
+		}
+	}
+	f.write("orphan", "# Orphan\n\nSee [other](../../src/other.go).\n")
+	f.srv.checkDisk()
+	var file struct{ Path, Text string }
+	f.get("/api/file?p=src/other.go", &file)
+	if file.Text != "package lexer\n" {
+		t.Fatalf("file = %+v", file)
+	}
+}
+
+// An error names a path relative to the repository, not the absolute path.
+func TestErrorsNameRelativePaths(t *testing.T) {
+	f := newFixture(t)
+	moved := f.root + "-moved"
+	if err := os.Rename(f.root, moved); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Rename(moved, f.root) })
+	res := f.do("GET", "/api/file?p=src/lexer.go", nil)
+	raw, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode == http.StatusOK || strings.Contains(string(raw), f.root) {
+		t.Fatalf("%s %s", res.Status, raw)
+	}
+}
+
+// Cancelling the context stops the server, even with an event stream open.
+func TestRunStopsWhenCancelled(t *testing.T) {
+	f := newFixture(t)
+	ln, err := f.srv.Serve("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- f.srv.run(ctx, ln) }()
+
+	res, err := http.Get("http://" + ln.Addr().String() + "/api/events?token=test-token-value")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if _, err := bufio.NewReader(res.Body).ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("run = %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the server did not stop")
+	}
+	if srv := f.srv.httpServer(); srv.IdleTimeout == 0 || srv.ReadHeaderTimeout == 0 {
+		t.Fatalf("timeouts = %+v", srv)
+	}
+}
+
 func TestSaveNewAndTask(t *testing.T) {
 	f := newFixture(t)
 	var p pageResponse
@@ -641,6 +714,15 @@ for (const [line, want] of cases) {
   }
 }
 console.log(failed === 0 ? "OK" : "FAILED " + failed);
+`)
+}
+
+// A malformed escape in the address does not throw outside route's try.
+func TestMalformedHashIsKeptRaw(t *testing.T) {
+	runPageScript(t, `
+location.hash = "#/page/%E0%A4%A";
+const c = current();
+console.log(c.kind === "page" && c.arg === "%E0%A4%A" ? "OK" : "FAILED " + JSON.stringify(c));
 `)
 }
 

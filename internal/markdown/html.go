@@ -3,7 +3,6 @@ package markdown
 import (
 	"bytes"
 	"strconv"
-	"strings"
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
@@ -32,7 +31,7 @@ type Target struct {
 // HTML renders a page's body to HTML, with front matter left out. resolve
 // rewrites each link's destination; a nil resolve leaves them as written.
 //
-// Raw HTML in a page is escaped, not passed through: pages come from a
+// Raw HTML in a page is omitted, not passed through: pages come from a
 // repository and an agent as well as from the person reading them.
 func HTML(src []byte, resolve func(Link) Target) ([]byte, error) {
 	_, bodyStart := splitFront(src)
@@ -90,10 +89,7 @@ func (t *linkTransformer) Transform(doc *ast.Document, reader text.Reader, pc pa
 }
 
 func (t *linkTransformer) rewrite(n ast.Node, dest []byte, label string, image bool, set func([]byte)) {
-	target, anchor := string(dest), ""
-	if i := strings.IndexByte(target, '#'); i >= 0 {
-		target, anchor = target[:i], target[i+1:]
-	}
+	target, anchor := splitDest(dest)
 	to := t.resolve(Link{Form: FormMarkdown, Image: image, Label: label, Target: target, Anchor: anchor})
 	if to.Href != "" {
 		set([]byte(to.Href))

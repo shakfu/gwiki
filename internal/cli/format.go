@@ -54,8 +54,8 @@ func (t *table) add(cells ...string) {
 
 // addStyled adds a row whose cells are measured as plain but printed as
 // styled. Both slices must be the same length. Styled cells print as given, so
-// they must come from a.style; a styled cell equal to its plain cell prints as
-// the plain cell, which write makes safe.
+// they must come from a.style or display.Line; as a guard, a styled cell equal
+// to its plain cell prints as the plain cell, which write makes safe.
 func (t *table) addStyled(plain, styled []string) {
 	for i := range styled {
 		if i < len(plain) && styled[i] == plain[i] {

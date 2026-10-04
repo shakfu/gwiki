@@ -1,6 +1,10 @@
 package wiki
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -52,5 +56,44 @@ func TestMoveOfAnUntitledPageRewritesLinksByItsName(t *testing.T) {
 	}
 	if got, want := source(t, root, "archive/renamed"), "No heading here. Self: [[renamed|my-page]]\n"; got != want {
 		t.Fatalf("moved page:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// A moved page keeps its file mode, and a directory the move empties is removed.
+func TestMoveKeepsTheModeAndRemovesAnEmptiedDirectory(t *testing.T) {
+	w, root := emptyWiki(t)
+	put(t, w, root, map[string]string{"notes/deep/a": "# A\n", "keep/b": "# B\n"})
+	if err := os.Chmod(pageFile(root, "notes/deep/a"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var synced []string
+	syncDir = func(_ *os.Root, dir string) error {
+		synced = append(synced, filepath.ToSlash(dir))
+		return nil
+	}
+	t.Cleanup(func() { syncDir = syncDirOf })
+	if _, warn, err := w.Move("notes/deep/a", "archive/a"); err != nil || !warn.Empty() {
+		t.Fatalf("Move: %v, %v", warn, err)
+	}
+	info, err := os.Stat(pageFile(root, "archive/a"))
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("moved page: %v, %v; want mode 0600", info, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, DirName, PagesDir, "notes")); !os.IsNotExist(err) {
+		t.Fatalf("notes is still there: %v", err)
+	}
+	slices.Sort(synced)
+	if got := strings.Join(slices.Compact(synced), " "); got != ". archive" {
+		t.Fatalf("synced %q, want the directories the move changed", got)
+	}
+
+	// A failed sync is a warning: the page was written.
+	syncDir = func(*os.Root, string) error { return errors.New("no sync here") }
+	_, warn, err := w.Move("keep/b", "keep/c")
+	if err != nil || warn.Unsynced == nil || !strings.Contains(warn.String(), "no sync here") {
+		t.Fatalf("Move with a failed sync: %+v, %v", warn, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, DirName, PagesDir, "keep")); err != nil {
+		t.Fatalf("keep was removed: %v", err)
 	}
 }

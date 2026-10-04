@@ -3,6 +3,7 @@ package webwiki
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -28,8 +29,15 @@ func writeJSON(w http.ResponseWriter, v any) {
 	w.Write(raw)
 }
 
-func fail(w http.ResponseWriter, err error, status int) {
-	writeStatus(w, status, map[string]string{"error": err.Error()})
+func (s *Server) fail(w http.ResponseWriter, err error, status int) {
+	writeStatus(w, status, map[string]string{"error": s.relative(err.Error())})
+}
+
+// relative rewrites the repository's absolute path in a message to a relative
+// one, so a response does not disclose where the repository is.
+func (s *Server) relative(msg string) string {
+	msg = strings.ReplaceAll(msg, s.w.Repo+string(filepath.Separator), "")
+	return strings.ReplaceAll(msg, s.w.Repo, ".")
 }
 
 func writeStatus(w http.ResponseWriter, status int, v any) {
@@ -64,7 +72,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 
 	pages, err := s.w.Pages("", "")
 	if err != nil {
-		fail(w, err, http.StatusInternalServerError)
+		s.fail(w, err, http.StatusInternalServerError)
 		return
 	}
 	out.Pages = len(pages)
@@ -98,9 +106,13 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		func() (err error) { out.Tasks, err = s.w.Tasks(wiki.TaskFilter{Status: "open"}); return },
 	} {
 		if err := load(); err != nil {
-			fail(w, err, http.StatusInternalServerError)
+			s.fail(w, err, http.StatusInternalServerError)
 			return
 		}
+	}
+
+	for i := range out.Skipped {
+		out.Skipped[i].Reason = s.relative(out.Skipped[i].Reason)
 	}
 
 	today := time.Now().Format("2006-01-02")
@@ -129,13 +141,13 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.Unlock()
 	pages, err := s.w.Pages(r.URL.Query().Get("dir"), r.URL.Query().Get("tag"))
 	if err != nil {
-		fail(w, err, http.StatusInternalServerError)
+		s.fail(w, err, http.StatusInternalServerError)
 		return
 	}
 	// The name comes with the list so that a page opened directly, without
 	// the overview, still has it for the header; stale, so that every view
 	// shows a failed refresh.
-	writeJSON(w, map[string]any{"name": s.w.Config.Name, "pages": pages, "stale": s.stale})
+	writeJSON(w, map[string]any{"name": s.w.Config.Name, "pages": pages, "stale": s.relative(s.stale)})
 }
 
 // page is one page with everything the browser draws.
@@ -167,17 +179,17 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
 
 	id, err := wiki.CleanPath(r.URL.Query().Get("p"))
 	if err != nil {
-		fail(w, err, http.StatusBadRequest)
+		s.fail(w, err, http.StatusBadRequest)
 		return
 	}
 	src, hash, err := s.w.Read(id)
 	if err != nil {
-		fail(w, err, http.StatusNotFound)
+		s.fail(w, err, http.StatusNotFound)
 		return
 	}
 	full, err := s.w.Page(id)
 	if err != nil {
-		fail(w, err, http.StatusNotFound)
+		s.fail(w, err, http.StatusNotFound)
 		return
 	}
 
@@ -197,7 +209,7 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
 	for _, l := range full.Backlinks {
 		bl := s.link(l)
 		if bl.Href, err = s.backHref(l, headings); err != nil {
-			fail(w, err, http.StatusInternalServerError)
+			s.fail(w, err, http.StatusInternalServerError)
 			return
 		}
 		out.Backlinks = append(out.Backlinks, bl)
@@ -220,7 +232,7 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
 		return t
 	})
 	if err != nil {
-		fail(w, err, http.StatusInternalServerError)
+		s.fail(w, err, http.StatusInternalServerError)
 		return
 	}
 	out.HTML = string(html)
@@ -312,7 +324,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	hits, err := s.w.Search(r.URL.Query().Get("q"), limit)
 	if err != nil {
-		fail(w, err, http.StatusBadRequest)
+		s.fail(w, err, http.StatusBadRequest)
 		return
 	}
 	type result struct {
@@ -333,7 +345,7 @@ func (s *Server) handleCheck(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.Unlock()
 	broken, err := s.w.Check()
 	if err != nil {
-		fail(w, err, http.StatusInternalServerError)
+		s.fail(w, err, http.StatusInternalServerError)
 		return
 	}
 	out := []link{}
@@ -343,43 +355,73 @@ func (s *Server) handleCheck(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out)
 }
 
-// handleFile serves a source file the wiki links to, so a link into the code
-// opens beside the page. Only files inside the repository are read.
+// handleFile serves a file some page links to, so a link into the code opens
+// beside the page. Any other file is refused: the repository holds secrets,
+// the git config and the cache, which the browser view has no reason to read.
 func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
+	rel := path.Clean("/" + r.URL.Query().Get("p"))[1:]
 	s.mu.Lock()
 	repo := s.w.Repo
+	linked, err := s.linked(rel)
 	s.mu.Unlock()
-
-	rel := path.Clean("/" + r.URL.Query().Get("p"))[1:]
+	if err != nil {
+		s.fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	if !linked {
+		s.fail(w, fmt.Errorf("no page links to %s", rel), http.StatusNotFound)
+		return
+	}
 	abs := filepath.Join(repo, filepath.FromSlash(rel))
 	inside, err := filepath.Rel(repo, abs)
 	if err != nil || inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) {
-		fail(w, errors.New("that path is outside the repository"), http.StatusBadRequest)
+		s.fail(w, errors.New("that path is outside the repository"), http.StatusBadRequest)
 		return
 	}
 	// Read through the repository root, so a symlink cannot lead outside it.
 	root, err := os.OpenRoot(repo)
 	if err != nil {
-		fail(w, err, http.StatusInternalServerError)
+		s.fail(w, err, http.StatusInternalServerError)
 		return
 	}
 	defer root.Close()
 	info, err := root.Stat(inside)
 	if err != nil {
-		fail(w, err, http.StatusNotFound)
+		s.fail(w, err, http.StatusNotFound)
 		return
 	}
 	const maxFile = 1 << 20
 	if info.IsDir() || info.Size() > maxFile {
-		fail(w, errors.New("only files under 1 MB are shown"), http.StatusBadRequest)
+		s.fail(w, errors.New("only files under 1 MB are shown"), http.StatusBadRequest)
 		return
 	}
 	raw, err := root.ReadFile(inside)
 	if err != nil {
-		fail(w, err, http.StatusInternalServerError)
+		s.fail(w, err, http.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, map[string]any{"path": rel, "text": string(raw)})
+}
+
+// linked reports whether a page has a file or line link to rel, a path
+// relative to the repository. The caller holds mu.
+func (s *Server) linked(rel string) (bool, error) {
+	pages, err := s.w.Pages("", "")
+	if err != nil {
+		return false, err
+	}
+	for _, p := range pages {
+		links, err := s.w.Links(p.Path)
+		if err != nil {
+			return false, err
+		}
+		for _, l := range links {
+			if (l.Kind == wiki.KindFile || l.Kind == wiki.KindLine) && l.Status != wiki.StatusOutsideRepo && l.Resolved == rel {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 // ---------------------------------------------------------------- writing
@@ -397,7 +439,7 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 		Text string `json:"text"`
 	}
 	if err := decode(r, &in); err != nil {
-		fail(w, err, http.StatusBadRequest)
+		s.fail(w, err, http.StatusBadRequest)
 		return
 	}
 	s.mu.Lock()
@@ -405,7 +447,7 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 
 	id, err := wiki.CleanPath(in.Page)
 	if err != nil {
-		fail(w, err, http.StatusBadRequest)
+		s.fail(w, err, http.StatusBadRequest)
 		return
 	}
 	var conflict *wiki.ErrConflict
@@ -413,15 +455,15 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case errors.As(err, &conflict):
 		writeStatus(w, http.StatusConflict, map[string]any{
-			"error": err.Error(), "current": string(conflict.Current), "hash": conflict.CurrentHash,
+			"error": s.relative(err.Error()), "current": string(conflict.Current), "hash": conflict.CurrentHash,
 		})
 		return
 	case err != nil:
-		fail(w, err, http.StatusBadRequest)
+		s.fail(w, err, http.StatusBadRequest)
 		return
 	}
 	s.bump()
-	writeJSON(w, map[string]string{"hash": hash, "warning": warning(warn)})
+	writeJSON(w, map[string]string{"hash": hash, "warning": s.relative(warning(warn))})
 }
 
 // warning is what a write that landed left wrong, or empty.
@@ -439,7 +481,7 @@ func (s *Server) handleNew(w http.ResponseWriter, r *http.Request) {
 		Task  bool   `json:"task"`
 	}
 	if err := decode(r, &in); err != nil {
-		fail(w, err, http.StatusBadRequest)
+		s.fail(w, err, http.StatusBadRequest)
 		return
 	}
 	s.mu.Lock()
@@ -447,14 +489,14 @@ func (s *Server) handleNew(w http.ResponseWriter, r *http.Request) {
 
 	info, warn, err := s.w.Create(wiki.NewPage{Title: in.Title, Dir: in.Dir, Task: in.Task})
 	if err != nil {
-		fail(w, err, http.StatusBadRequest)
+		s.fail(w, err, http.StatusBadRequest)
 		return
 	}
 	s.bump()
 	writeJSON(w, struct {
 		wiki.PageInfo
 		Warning string `json:"warning"`
-	}{info, warning(warn)})
+	}{info, s.relative(warning(warn))})
 }
 
 func (s *Server) handleTask(w http.ResponseWriter, r *http.Request) {
@@ -465,7 +507,7 @@ func (s *Server) handleTask(w http.ResponseWriter, r *http.Request) {
 		Status string `json:"status"`
 	}
 	if err := decode(r, &in); err != nil {
-		fail(w, err, http.StatusBadRequest)
+		s.fail(w, err, http.StatusBadRequest)
 		return
 	}
 	s.mu.Lock()
@@ -473,24 +515,24 @@ func (s *Server) handleTask(w http.ResponseWriter, r *http.Request) {
 
 	id, err := wiki.CleanPath(in.Page)
 	if err != nil {
-		fail(w, err, http.StatusBadRequest)
+		s.fail(w, err, http.StatusBadRequest)
 		return
 	}
 	var changed *wiki.ErrTaskChanged
 	t, err := s.w.TaskAt(id, in.Line, in.Text)
 	switch {
 	case errors.As(err, &changed):
-		fail(w, err, http.StatusConflict)
+		s.fail(w, err, http.StatusConflict)
 		return
 	case err != nil:
-		fail(w, err, http.StatusBadRequest)
+		s.fail(w, err, http.StatusBadRequest)
 		return
 	}
 	warn, err := s.w.SetTaskStatus(t, in.Status)
 	if err != nil {
-		fail(w, err, http.StatusConflict)
+		s.fail(w, err, http.StatusConflict)
 		return
 	}
 	s.bump()
-	writeJSON(w, map[string]string{"status": in.Status, "warning": warning(warn)})
+	writeJSON(w, map[string]string{"status": in.Status, "warning": s.relative(warning(warn))})
 }

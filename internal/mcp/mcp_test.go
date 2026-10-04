@@ -491,3 +491,41 @@ func TestEveryReplyCarriesAResultOrAnError(t *testing.T) {
 		t.Fatalf("reply = %v, want a result", replies[0])
 	}
 }
+
+// A panic in a handler answers that request with -32603, is logged with its
+// stack, and leaves the session running.
+func TestAPanicIsAnsweredAndLogged(t *testing.T) {
+	var out, logw bytes.Buffer
+	srv := New(nil, "gwiki", "test") // no wiki, so every tool panics
+	in := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"gwiki_read","arguments":{"page":"x"}}}` + "\n" +
+		`{"jsonrpc":"2.0","id":2,"method":"ping"}` + "\n"
+	if err := srv.Serve(strings.NewReader(in), &out, &logw); err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != 2 || !strings.Contains(lines[0], `"id":1`) || !strings.Contains(lines[0], `"code":-32603`) || !strings.Contains(lines[1], `"result"`) {
+		t.Fatalf("replies = %q", lines)
+	}
+	if !strings.Contains(logw.String(), "panic") || !strings.Contains(logw.String(), "goroutine") {
+		t.Fatalf("log = %q", logw.String())
+	}
+}
+
+// A frame over the limit is discarded and answered with an error, and the
+// next frame is read.
+func TestAnOversizedFrameIsRefused(t *testing.T) {
+	defer func(n int) { maxFrame = n }(maxFrame)
+	maxFrame = 1024
+	f := newFixture(t)
+	big := `{"jsonrpc":"2.0","id":1,"method":"ping","params":{"x":"` + strings.Repeat("a", 4096) + `"}}`
+	replies := f.exchange(big, `{"jsonrpc":"2.0","id":2,"method":"ping"}`)
+	if len(replies) != 2 {
+		t.Fatalf("got %d replies: %v", len(replies), replies)
+	}
+	if e, ok := replies[0]["error"].(map[string]any); !ok || replies[0]["id"] != nil || int(e["code"].(float64)) != codeInvalidRequest {
+		t.Fatalf("reply to an oversized frame = %v", replies[0])
+	}
+	if replies[1]["id"] != float64(2) || replies[1]["result"] == nil {
+		t.Fatalf("reply after it = %v", replies[1])
+	}
+}

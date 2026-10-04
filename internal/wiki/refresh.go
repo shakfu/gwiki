@@ -129,10 +129,16 @@ func (w *Wiki) Refresh() (Changes, error) {
 	}
 	unread := map[string]bool{}
 	restat := map[string]fileStat{} // content unchanged; only the change time moved
+	if beforeParse != nil {
+		beforeParse()
+	}
 	pages := slices.DeleteFunc(parseAll(root, todo), func(p parsed) bool {
 		if p.err != nil {
 			unread[p.rel] = true
-			skipped = append(skipped, skipErr(p.rel, p.err))
+			// One removed since the scan is gone, not unreadable.
+			if !os.IsNotExist(p.err) {
+				skipped = append(skipped, skipErr(p.rel, p.err))
+			}
 			return true
 		}
 		if k, ok := known[p.rel]; ok && k.size == p.size && k.mtime == p.mtime && k.hash == p.hash {
@@ -200,6 +206,12 @@ func (w *Wiki) Refresh() (Changes, error) {
 	for _, id := range ch.Added {
 		added[id] = true
 	}
+	addedHashes := map[string]int{}
+	for _, p := range pages {
+		if added[pageID(p.rel)] {
+			addedHashes[p.hash]++
+		}
+	}
 	for _, id := range ch.Modified {
 		if err := wr.forget(id); err != nil {
 			return ch, err
@@ -218,23 +230,28 @@ func (w *Wiki) Refresh() (Changes, error) {
 		if err := wr.insert(p); err != nil {
 			return ch, fmt.Errorf("index %s: %w", p.rel, err)
 		}
-		if !added[id] {
+		// A rename needs one page each side: content shared by several, such
+		// as an empty page or a template, says nothing of which became which.
+		if !added[id] || addedHashes[p.hash] > 1 {
 			continue
 		}
-		var old string
-		switch err := tx.QueryRow(`SELECT path FROM gone WHERE hash = ? AND path != ? ORDER BY rowid DESC LIMIT 1`, p.hash, id).Scan(&old); err {
-		case nil:
-			ch.Renamed = append(ch.Renamed, [2]string{old, id})
-			if _, err := tx.Exec(`INSERT INTO renames (old, new) VALUES (?, ?)`, old, id); err != nil {
-				return ch, err
-			}
-			if _, err := tx.Exec(`DELETE FROM gone WHERE path = ?`, old); err != nil {
-				return ch, err
-			}
-		case sql.ErrNoRows:
-		default:
+		old, err := renamedFrom(tx, p.hash, id)
+		if err != nil {
 			return ch, err
 		}
+		if old == "" {
+			continue
+		}
+		ch.Renamed = append(ch.Renamed, [2]string{old, id})
+		if _, err := tx.Exec(`INSERT INTO renames (old, new) VALUES (?, ?)`, old, id); err != nil {
+			return ch, err
+		}
+		if _, err := tx.Exec(`DELETE FROM gone WHERE path = ?`, old); err != nil {
+			return ch, err
+		}
+	}
+	if _, err := tx.Exec(`DELETE FROM renames WHERE rowid <= (SELECT max(rowid) FROM renames) - ?`, maxRenames); err != nil {
+		return ch, err
 	}
 
 	if err := wr.resolve(); err != nil {
@@ -623,3 +640,31 @@ func (wr *writer) insert(p parsed) error {
 	}
 	return nil
 }
+
+// maxRenames bounds the renames kept for link fixes to offer.
+const maxRenames = 1000
+
+// renamedFrom is the one removed page with this content, or "" when there is
+// none or more than one.
+func renamedFrom(tx *sql.Tx, hash, id string) (string, error) {
+	rows, err := tx.Query(`SELECT DISTINCT path FROM gone WHERE hash = ? AND path != ? LIMIT 2`, hash, id)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	var paths []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return "", err
+		}
+		paths = append(paths, p)
+	}
+	if err := rows.Err(); err != nil || len(paths) != 1 {
+		return "", err
+	}
+	return paths[0], nil
+}
+
+// beforeParse, when set by a test, runs between the scan and the reads.
+var beforeParse func()

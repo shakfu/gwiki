@@ -6,10 +6,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"math/rand/v2"
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strconv"
@@ -74,10 +76,14 @@ type Warnings struct {
 
 	// Skipped are the files the wiki leaves out; see Wiki.Skipped.
 	Skipped []Skip
+
+	// Unsynced is why a changed directory could not be synced, or an emptied
+	// one removed. The change may not survive a crash.
+	Unsynced error
 }
 
 // Empty reports whether there is nothing to warn about.
-func (w Warnings) Empty() bool { return w.Stale == nil && len(w.Skipped) == 0 }
+func (w Warnings) Empty() bool { return w.Stale == nil && len(w.Skipped) == 0 && w.Unsynced == nil }
 
 // String is the warnings on one line.
 func (w Warnings) String() string {
@@ -90,16 +96,20 @@ func (w Warnings) String() string {
 	} else if n > 1 {
 		parts = append(parts, fmt.Sprintf("%d files are not in the wiki; gwiki check lists them", n))
 	}
+	if w.Unsynced != nil {
+		parts = append(parts, fmt.Sprintf("the change was made but may be lost on a crash: %v", w.Unsynced))
+	}
 	return strings.Join(parts, "; ")
 }
 
 // fileWrite is one change in a batch: new content for a page, or its removal
 // when Data is nil. Base is the hash the writer read, or empty for a page that
-// must not exist yet.
+// must not exist yet. A new page takes the file mode of From, when set.
 type fileWrite struct {
 	Page string
 	Base string
 	Data []byte
+	From string
 }
 
 // Read returns a page's source and its hash.
@@ -221,7 +231,11 @@ func (w *Wiki) commit(writes []fileWrite) (Warnings, error) {
 	}()
 	for i, fw := range writes {
 		if fw.Data != nil {
-			if temps[i], err = stage(root, pageRel(fw.Page), fw.Data); err != nil {
+			modeOf := pageRel(fw.Page)
+			if fw.From != "" {
+				modeOf = pageRel(fw.From)
+			}
+			if temps[i], err = stage(root, pageRel(fw.Page), modeOf, fw.Data); err != nil {
 				return Warnings{}, err
 			}
 		}
@@ -246,10 +260,11 @@ func (w *Wiki) commit(writes []fileWrite) (Warnings, error) {
 		}
 		done++
 	}
+	var warn Warnings
+	warn.Unsynced = settle(root, writes[:done])
 	tx.Rollback()
 
 	// Refreshed after a partial write too, so the cache matches the disk.
-	var warn Warnings
 	if _, warn.Stale = w.Refresh(); warn.Stale == nil {
 		warn.Skipped, warn.Stale = w.Skipped()
 	}
@@ -303,16 +318,87 @@ func writeOrder(fw fileWrite) int {
 	return 1
 }
 
+// settle removes the directories that removals emptied, up to the pages
+// directory, then syncs every directory above a page written or removed.
+func settle(root *os.Root, done []fileWrite) error {
+	var errs []error
+	dirs := map[string]bool{}
+	for _, fw := range done {
+		dir := filepath.Dir(pageRel(fw.Page))
+		if fw.Data == nil {
+			var err error
+			if dir, err = removeEmpty(root, dir); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		for ; !dirs[dir]; dir = filepath.Dir(dir) {
+			dirs[dir] = true
+			if dir == "." {
+				break
+			}
+		}
+	}
+	if runtime.GOOS != "windows" { // which cannot sync a directory
+		for dir := range dirs {
+			if err := syncDir(root, dir); err != nil {
+				errs = append(errs, fmt.Errorf("sync %s: %w", filepath.ToSlash(dir), err))
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// removeEmpty removes dir and its parents while they are empty, and returns
+// the first directory it kept.
+func removeEmpty(root *os.Root, dir string) (string, error) {
+	for ; dir != "."; dir = filepath.Dir(dir) {
+		f, err := root.Open(dir)
+		if os.IsNotExist(err) {
+			continue
+		} else if err != nil {
+			return dir, err
+		}
+		_, err = f.Readdirnames(1)
+		f.Close()
+		if err != io.EOF {
+			if err == nil {
+				return dir, nil
+			}
+			return dir, err
+		}
+		if err := root.Remove(dir); err != nil && !os.IsNotExist(err) {
+			return dir, fmt.Errorf("remove the emptied directory %s: %w", filepath.ToSlash(dir), err)
+		}
+	}
+	return dir, nil
+}
+
+// syncDir syncs a directory, so the renames and removals in it are on disk. A
+// test replaces it.
+var syncDir = syncDirOf
+
+func syncDirOf(root *os.Root, dir string) error {
+	f, err := root.Open(dir)
+	if err != nil {
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}
+
 // stage writes data to a synced temporary file beside rel, with the mode of
-// the page it will replace, and returns its name. The name is hidden, so a
-// scan never reads it.
-func stage(root *os.Root, rel string, data []byte) (string, error) {
+// modeOf, the page it will replace or one it moves, and returns its name. The
+// name is hidden, so a scan never reads it.
+func stage(root *os.Root, rel, modeOf string, data []byte) (string, error) {
 	dir := filepath.Dir(rel)
 	if err := root.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
 	mode := os.FileMode(0o644)
-	if info, err := root.Stat(rel); err == nil {
+	if info, err := root.Stat(modeOf); err == nil {
 		mode = info.Mode().Perm()
 	}
 	var f *os.File

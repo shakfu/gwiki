@@ -202,7 +202,7 @@ func (w *Wiki) PlanMove(from, to string) (*MovePlan, error) {
 			return nil, err
 		}
 		if page == from {
-			plan.writes = append(plan.writes, fileWrite{Page: to, Data: out}, fileWrite{Page: from, Base: ps.hash})
+			plan.writes = append(plan.writes, fileWrite{Page: to, Data: out, From: from}, fileWrite{Page: from, Base: ps.hash})
 			continue
 		}
 		plan.writes = append(plan.writes, fileWrite{Page: page, Base: ps.hash, Data: out})
@@ -295,7 +295,12 @@ func checkDest(src []byte, l Link) error {
 	if l.Anchor != "" {
 		want += "#" + l.Anchor
 	}
-	if got := string(src[l.DestStart:l.DestEnd]); strings.TrimSpace(got) != want {
+	got := strings.TrimSpace(string(src[l.DestStart:l.DestEnd]))
+	if l.Form == string(markdown.FormMarkdown) {
+		// Parse recorded the destination decoded.
+		got = markdown.DecodeDest([]byte(got))
+	}
+	if got != want {
 		return fmt.Errorf("%s changed since it was indexed; run the command again", l.Page)
 	}
 	return nil

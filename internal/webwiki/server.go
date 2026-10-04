@@ -8,6 +8,7 @@
 package webwiki
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"embed"
@@ -18,9 +19,12 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"os"
+	"os/signal"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/shakfu/gwiki/internal/wiki"
@@ -205,8 +209,21 @@ func (s *Server) Serve(addr string) (net.Listener, error) {
 	return ln, nil
 }
 
-// Run serves until the listener closes, polling the pages for changes.
+// Run serves until the listener closes or the process is interrupted or
+// terminated, then waits up to 5 seconds for requests in flight.
 func (s *Server) Run(ln net.Listener) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		<-ctx.Done()
+		stop() // a second signal ends the process at once
+	}()
+	return s.run(ctx, ln)
+}
+
+// run serves until the listener closes or ctx ends, polling the pages for
+// changes. Event streams derive from ctx, so they end when it does.
+func (s *Server) run(ctx context.Context, ln net.Listener) error {
 	if addr, ok := ln.Addr().(*net.TCPAddr); ok && !addr.IP.IsLoopback() {
 		s.anyHost = true
 	}
@@ -214,11 +231,30 @@ func (s *Server) Run(ln net.Listener) error {
 	defer close(stop)
 	go s.watch(stop)
 
-	srv := &http.Server{Handler: s, ReadHeaderTimeout: 10 * time.Second}
-	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	srv := s.httpServer()
+	srv.BaseContext = func(net.Listener) context.Context { return ctx }
+	served := make(chan error, 1)
+	go func() { served <- srv.Serve(ln) }()
+	select {
+	case err := <-served:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
 		return err
+	case <-ctx.Done():
+	}
+	wait, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(wait); err != nil {
+		return fmt.Errorf("shut down: %w", err)
 	}
 	return nil
+}
+
+// httpServer is the server's HTTP configuration. It has no write timeout,
+// since an event stream stays open.
+func (s *Server) httpServer() *http.Server {
+	return &http.Server{Handler: s, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute}
 }
 
 func (s *Server) watch(stop <-chan struct{}) {

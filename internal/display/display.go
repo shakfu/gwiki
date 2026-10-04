@@ -9,7 +9,7 @@ package display
 import "strings"
 
 // Line returns s for display on a single line. Tabs become spaces; every other
-// control character, newlines included, becomes '?'.
+// character Control names, newlines included, becomes '?'.
 func Line(s string) string {
 	if clean(s, false) {
 		return s
@@ -18,7 +18,7 @@ func Line(s string) string {
 }
 
 // Block returns s for display over several lines. Newlines and tabs are kept;
-// every other control character becomes '?'.
+// every other character Control names becomes '?'.
 func Block(s string) string {
 	if clean(s, true) {
 		return s
@@ -26,9 +26,19 @@ func Block(s string) string {
 	return strings.Map(func(r rune) rune { return replace(r, true) }, s)
 }
 
-// Control reports whether r is a C0 or C1 control character or DEL.
+// Control reports whether r must not reach a terminal as is: a C0 or C1
+// control character, DEL, a bidirectional embedding, override or isolate, or
+// an invisible space. ZWJ and ZWNJ are kept; scripts and emoji need them.
 func Control(r rune) bool {
-	return r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0)
+	switch {
+	case r < 0x20, r == 0x7f, r >= 0x80 && r < 0xa0:
+		return true
+	case r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069:
+		return true // reorders the text around it
+	case r == 0x200b, r == 0x2060, r == 0xfeff:
+		return true // zero-width space, word joiner, BOM
+	}
+	return false
 }
 
 func replace(r rune, multiline bool) rune {

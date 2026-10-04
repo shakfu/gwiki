@@ -863,3 +863,16 @@ func TestTaskAtNamesATaskAsListed(t *testing.T) {
 		t.Fatalf("TaskAt(plan, 0) = %v", err)
 	}
 }
+
+// A fragment ending in a colon and digits names a task by its text when no
+// page has the part before the colon.
+func TestFindTaskByTextWithAColonAndDigits(t *testing.T) {
+	w, root := emptyWiki(t)
+	put(t, w, root, map[string]string{"plan": "# Plan\n\n- [ ] call at 10:30\n"})
+	if item, err := w.FindTask("call at 10:30"); err != nil || item.Page != "plan" || item.Line != 3 {
+		t.Fatalf("FindTask = %+v, %v", item, err)
+	}
+	if _, err := w.FindTask("plan:9"); err == nil || !strings.Contains(err.Error(), "no checklist item on line 9") {
+		t.Fatalf("FindTask(plan:9) = %v", err)
+	}
+}

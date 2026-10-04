@@ -2,7 +2,8 @@
 // derived SQLite cache of their titles, headings, links, tags and tasks.
 //
 // The pages are the truth. The cache is rebuilt from them whenever it is
-// missing, stale or unreadable, and every query brings it up to date first.
+// missing, stale or unreadable. Open, a write and a move bring it up to date;
+// a query reads it as it is, so a long-lived caller refreshes on its own.
 // See docs/dev/wiki-design.md.
 package wiki
 

@@ -43,11 +43,10 @@ type Buffer struct {
 	edits int
 }
 
-// change is one replacement of text, and the cursor around it.
+// change is one replacement of text.
 type change struct {
-	at                        Pos
-	removed, inserted         string
-	cursorBefore, cursorAfter Pos
+	at                Pos
+	removed, inserted string
 }
 
 // group is one undoable step: everything a command changed.
@@ -99,12 +98,6 @@ func (b *Buffer) Line(i int) []rune {
 
 // LineString returns one line as a string.
 func (b *Buffer) LineString(i int) string { return string(b.Line(i)) }
-
-// end is the position just past the last line.
-func (b *Buffer) end() Pos {
-	last := len(b.lines) - 1
-	return Pos{last, len(b.lines[last])}
-}
 
 // clamp brings a position inside the buffer. In normal mode the cursor sits
 // on a character, so it stops one short of the end of a line unless past is

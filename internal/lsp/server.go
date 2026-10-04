@@ -18,6 +18,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"time"
@@ -174,12 +175,26 @@ func (s *Server) handle(body []byte) (exit bool) {
 	}
 	request := len(msg.ID) > 0
 
+	if problem := invalidRequest(msg); problem != "" {
+		if request {
+			s.send(map[string]any{"jsonrpc": "2.0", "id": nil, "error": &rpcError{Code: codeInvalidRequest, Message: problem}})
+		} else {
+			s.logf("ignored %s: %s", msg.Method, problem)
+		}
+		return false
+	}
 	if msg.Method == "exit" {
 		return true
 	}
 	if !s.initialized && msg.Method != "initialize" {
 		if request {
 			s.reply(msg.ID, nil, &rpcError{Code: codeNotInitialized, Message: "initialize first"})
+		}
+		return false
+	}
+	if s.initialized && msg.Method == "initialize" {
+		if request {
+			s.reply(msg.ID, nil, &rpcError{Code: codeInvalidRequest, Message: "the server is already initialized"})
 		}
 		return false
 	}
@@ -195,13 +210,45 @@ func (s *Server) handle(body []byte) (exit bool) {
 		}
 		return false
 	}
-	result, err := h(s, msg.Params)
+	result, err := s.call(h, msg)
 	if request {
 		s.reply(msg.ID, result, err)
 	} else if err != nil {
 		s.logf("%s: %v", msg.Method, err)
 	}
 	return false
+}
+
+// call runs a handler, turning a panic into an internal error that is logged
+// with its stack, so one bad request does not end the session.
+func (s *Server) call(h handler, msg message) (result any, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.logf("%s: panic: %v\n%s", msg.Method, r, debug.Stack())
+			result, err = nil, &rpcError{Code: codeInternal, Message: fmt.Sprintf("internal error: %v", r)}
+		}
+	}()
+	return h(s, msg.Params)
+}
+
+// invalidRequest explains why a message is not valid JSON-RPC 2.0, or returns
+// the empty string. LSP ids are integers or strings, never null.
+func invalidRequest(msg message) string {
+	if msg.JSONRPC != "2.0" {
+		return `"jsonrpc" must be "2.0"`
+	}
+	if len(msg.ID) == 0 {
+		return ""
+	}
+	var id any
+	if json.Unmarshal(msg.ID, &id) != nil {
+		return "an id must be a string or a number"
+	}
+	switch id.(type) {
+	case string, float64:
+		return ""
+	}
+	return "an id must be a string or a number"
 }
 
 type handler func(s *Server, params json.RawMessage) (any, error)

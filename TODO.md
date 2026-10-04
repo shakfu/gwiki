@@ -18,7 +18,7 @@ IDs refer to `REVIEW.md` (commit `2cdc3d9`, 2026-09-27), which holds the evidenc
 
 - [x] W7. A move of an untitled page breaks `[[title]]` links. `internal/wiki/move.go:85-86`
 
-- [ ] W8. `SetBody`, `Remove`, `Tag`, `SetTaskStatus` (task page) and `Fix` take no base hash; the README now says so. `internal/wiki/ops.go:235-325,402-410`, `internal/wiki/fix.go:202-215` Not changed: `SetBody`, `Tag`, `Remove` state their whole result and check the hash they read; task edits and `Fix` now re-check the item or link. Reopen if a caller needs a base hash.
+- [x] W8. `SetBody`, `Remove`, `Tag`, `SetTaskStatus` (task page) and `Fix` take no base hash; the README now says so. `internal/wiki/ops.go:235-325,402-410`, `internal/wiki/fix.go:202-215` Closed without change: no caller holds a base to pass. `SetBody`, `Tag`, `Remove` state their whole result and check the hash they read; task edits and `Fix` now re-check the item or link.
 
 - [x] W9. `Open` deletes the cache on any connect error, including lock timeout. `internal/wiki/cache.go:113-118`
 

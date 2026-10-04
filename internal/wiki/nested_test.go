@@ -1,6 +1,8 @@
 package wiki
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -100,5 +102,37 @@ func TestMoveReadmeKeepsDirectoryLinks(t *testing.T) {
 		if got, status := linkStatus(t, w, page); got != "design/README" || status != StatusOK {
 			t.Errorf("%s after the move: %q %s", page, got, status)
 		}
+	}
+}
+
+// A link to a directory without pages is a file link until a page is added
+// under it, and one again when the last page goes.
+func TestADirectoryLinkFollowsItsPages(t *testing.T) {
+	w, root := emptyWiki(t)
+	if err := os.MkdirAll(filepath.Join(root, DirName, PagesDir, "media"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	put(t, w, root, map[string]string{"by-dir": "[media](media/)\n"})
+	kind := func() string {
+		t.Helper()
+		links, err := w.Links("by-dir")
+		if err != nil || len(links) != 1 {
+			t.Fatalf("links = %+v, %v", links, err)
+		}
+		return links[0].Kind + " " + links[0].Resolved + " " + links[0].Status
+	}
+	if got := kind(); got != "file .gwiki/wiki/media ok" {
+		t.Fatalf("before: %s", got)
+	}
+	put(t, w, root, map[string]string{"media/README": "# Media\n"})
+	if got := kind(); got != "page media/README ok" {
+		t.Fatalf("after a README: %s", got)
+	}
+	os.Remove(pageFile(root, "media/README"))
+	if _, err := w.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+	if got := kind(); got != "file .gwiki/wiki/media ok" {
+		t.Fatalf("after the README went: %s", got)
 	}
 }

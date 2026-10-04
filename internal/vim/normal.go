@@ -3,6 +3,7 @@ package vim
 import (
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // result says what the keys parsed so far amount to.
@@ -80,6 +81,23 @@ func firstRune(s string) rune {
 		return r
 	}
 	return 0
+}
+
+// keyChar is the character a key types, for r, f and t; other named keys
+// have none.
+func keyChar(k string) (rune, bool) {
+	switch k {
+	case "tab":
+		return '\t', true
+	case "space":
+		return ' ', true
+	case "enter":
+		return '\n', true
+	}
+	if utf8.RuneCountInString(k) != 1 {
+		return 0, false
+	}
+	return firstRune(k), true
 }
 
 func atLeast(count int) int {
@@ -617,12 +635,9 @@ func (e *Editor) paste(after bool, count int, reg rune) {
 }
 
 func (e *Editor) replaceChars(k string, count int) result {
-	if k == "esc" {
+	r, ok := keyChar(k)
+	if !ok {
 		return done
-	}
-	r := firstRune(k)
-	if k == "enter" {
-		r = '\n'
 	}
 	line := e.Buf.Line(e.Cursor.Line)
 	if e.Cursor.Col+count > len(line) {
@@ -631,10 +646,14 @@ func (e *Editor) replaceChars(k string, count int) result {
 	}
 	e.change(func() {
 		end := Pos{e.Cursor.Line, e.Cursor.Col + count}
-		e.Buf.Replace(e.Cursor, end, strings.Repeat(string(r), count))
-		if r != '\n' {
-			e.Cursor = Pos{e.Cursor.Line, e.Cursor.Col + count - 1}
+		if r == '\n' {
+			// Vim replaces the characters with one line break.
+			e.Buf.Replace(e.Cursor, end, "\n")
+			e.Cursor = Pos{e.Cursor.Line + 1, 0}
+			return
 		}
+		e.Buf.Replace(e.Cursor, end, strings.Repeat(string(r), count))
+		e.Cursor = Pos{e.Cursor.Line, e.Cursor.Col + count - 1}
 	})
 	return done
 }

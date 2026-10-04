@@ -177,7 +177,9 @@ function drawTree() {
 function current() {
   const hash = location.hash.replace(/^#\/?/, "");
   const [kind, ...rest] = hash.split("/");
-  const arg = decodeURIComponent(rest.join("/"));
+  let arg = rest.join("/");
+  // A malformed escape is kept as typed, so the page it names is reported missing.
+  try { arg = decodeURIComponent(arg); } catch {}
   return { kind: kind || "", arg };
 }
 

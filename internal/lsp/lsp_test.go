@@ -311,6 +311,69 @@ func TestBadFrameEndsTheSession(t *testing.T) {
 	c.done <- nil
 }
 
+func TestInvalidEnvelopesAreRejected(t *testing.T) {
+	c := newClient(t)
+	for _, frame := range []map[string]any{
+		{"jsonrpc": "2.0", "id": nil, "method": "shutdown"},
+		{"id": 7, "method": "shutdown"},
+		{"jsonrpc": "1.0", "id": 8, "method": "shutdown"},
+	} {
+		c.send(frame)
+		m := c.next()
+		var e rpcError
+		if len(m.Error) == 0 || json.Unmarshal(m.Error, &e) != nil || e.Code != codeInvalidRequest {
+			t.Fatalf("%v answered %s %s", frame, m.Result, m.Error)
+		}
+	}
+	// A notification with the wrong version is not run.
+	c.send(map[string]any{"jsonrpc": "1.0", "method": "exit"})
+	if err := c.call("textDocument/hover", at("file:///x.md", 0, 0), nil); err == nil || err.Code == codeInvalidRequest {
+		t.Fatalf("an invalid frame shut the server down: %v", err)
+	}
+}
+
+func TestASecondInitializeIsRefused(t *testing.T) {
+	c := newClient(t)
+	first := c.srv.w
+	err := c.call("initialize", map[string]any{"rootUri": fileURI(c.root), "capabilities": map[string]any{}}, nil)
+	if err == nil || err.Code != codeInvalidRequest {
+		t.Fatalf("a second initialize = %v", err)
+	}
+	c.mustCall("workspace/symbol", map[string]any{"query": ""}, nil)
+	if c.srv.w != first {
+		t.Fatal("a second initialize replaced the wiki")
+	}
+}
+
+func TestAPanicIsAnsweredAndLogged(t *testing.T) {
+	inR, inW := io.Pipe()
+	outR, outW := io.Pipe()
+	var logw bytes.Buffer
+	// An opener that returns no wiki and no error makes initialize panic.
+	srv := New(func(string) (*wiki.Wiki, error) { return nil, nil }, "gwiki", "test")
+	srv.Poll = 0
+	done := make(chan error, 1)
+	go func() { done <- srv.Serve(inR, outW, &logw); outW.Close() }()
+
+	writeFrame(inW, map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{}})
+	body, err := readFrame(bufio.NewReader(outR))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m message
+	var e rpcError
+	if json.Unmarshal(body, &m) != nil || json.Unmarshal(m.Error, &e) != nil || e.Code != codeInternal || string(m.ID) != "1" {
+		t.Fatalf("reply to a panic = %s", body)
+	}
+	inW.Close()
+	if err := <-done; err != nil {
+		t.Fatalf("Serve = %v", err)
+	}
+	if !strings.Contains(logw.String(), "panic") || !strings.Contains(logw.String(), "goroutine") {
+		t.Fatalf("log = %q", logw.String())
+	}
+}
+
 func TestDiagnosticsFollowTheBuffer(t *testing.T) {
 	c := newClient(t)
 	uri := c.pageURI("index")

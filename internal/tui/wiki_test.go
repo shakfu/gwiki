@@ -1272,3 +1272,82 @@ func TestWikiPreviewSanitizesDue(t *testing.T) {
 		t.Fatalf("no due date over the preview:\n%s", v)
 	}
 }
+
+// The draft replaces its file rather than writing into it, so a crash
+// mid-write leaves the previous draft whole.
+func TestWikiDraftWriteReplacesTheFile(t *testing.T) {
+	f := newWikiFixture(t)
+	f.m.focus = focusContent
+	dir := f.m.draftsDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(f.root, "other.txt")
+	if err := os.WriteFile(other, []byte("keep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	draft := filepath.Join(dir, draftName("index"))
+	if err := os.Symlink(other, draft); err != nil {
+		t.Fatal(err)
+	}
+	f.press("o")
+	f.typing("new text")
+	f.press("esc")
+	f.m.Update(pollMsg{})
+	if raw, err := os.ReadFile(other); err != nil || string(raw) != "keep\n" {
+		t.Fatalf("the draft wrote through the old file: %q, %v", raw, err)
+	}
+	if info, err := os.Lstat(draft); err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("draft = %v, %v", info, err)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+		t.Fatalf("drafts dir = %v", entries)
+	}
+}
+
+// A draft restored over a page changed since keeps the hash it was made from,
+// so :w refuses rather than overwriting the newer page.
+func TestWikiStaleDraftKeepsItsBase(t *testing.T) {
+	f := newWikiFixture(t)
+	f.m.focus = focusContent
+	f.press("o")
+	f.typing("draft text")
+	f.press("esc")
+	f.m.Update(pollMsg{})
+	f.write("index", "# Home\n\nNewer elsewhere.\n")
+	if err := f.m.load("index"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(f.view(), "the page has changed since") {
+		t.Fatalf("no stale offer:\n%s", f.view())
+	}
+	f.typing("y")
+	f.press("enter")
+	f.press(":")
+	f.typing("w")
+	f.press("enter")
+	if got := f.source("index"); got != "# Home\n\nNewer elsewhere.\n" {
+		t.Fatalf(":w overwrote the newer page:\n%s", got)
+	}
+	if !strings.Contains(f.view(), ":w! overwrites") {
+		t.Fatalf("no conflict message:\n%s", f.view())
+	}
+}
+
+// "." after a completion types the completed text again, as vim does, even
+// when the same completion would now offer something else first.
+func TestWikiDotRepeatsACompletion(t *testing.T) {
+	f := newWikiFixture(t)
+	f.m.focus = focusContent
+	f.press("G", "o")
+	f.typing("see [[desi")
+	f.press("ctrl+n", "esc")
+	f.write("desirable", "# Desirable\n")
+	f.write("desiccated", "# Desiccated\n")
+	f.m.Update(pollMsg{})
+	f.press(".")
+	ed := f.m.edit.ed
+	if got := ed.Buf.LineString(ed.Cursor.Line); got != "- [ ] see [[Design sketch" {
+		t.Fatalf(". after a completion: %q\n%s", got, ed.Text())
+	}
+}

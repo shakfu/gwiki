@@ -128,16 +128,22 @@ func (e *Editor) exCommand(text string) {
 		return
 	}
 
-	name := rest
-	arg := ""
-	if i := strings.IndexAny(rest, " /"); i > 0 {
-		name, arg = rest[:i], strings.TrimSpace(rest[i:])
-		if rest[i] == '/' {
-			name, arg = rest[:i], rest[i:]
+	// A name is letters; :s takes whatever follows, as its delimiter may be "!".
+	i := 0
+	for i < len(rest) && isASCIILetter(rest[i]) {
+		i++
+	}
+	name, arg := rest[:i], rest[i:]
+	force := false
+	if name == "s" || name == "substitute" {
+		arg = strings.TrimLeft(arg, " ")
+	} else {
+		force = strings.HasPrefix(arg, "!")
+		arg = strings.TrimSpace(strings.TrimPrefix(arg, "!"))
+		if name == "" {
+			name = rest
 		}
 	}
-	force := strings.HasSuffix(name, "!")
-	name = strings.TrimSuffix(name, "!")
 
 	switch name {
 	case "w", "write":
@@ -262,6 +268,10 @@ func (e *Editor) substitute(rng exRange, arg string) {
 		return
 	}
 	sep := arg[0]
+	if sep >= 0x80 || sep == '\\' || sep == '"' || sep == '|' || isASCIILetter(sep) || sep >= '0' && sep <= '9' {
+		e.fail("bad delimiter: " + string(sep))
+		return
+	}
 	parts := splitUnescaped(arg[1:], rune(sep))
 	if len(parts) < 2 {
 		e.fail("usage: :s/pattern/replacement/[g]")
@@ -288,25 +298,30 @@ func (e *Editor) substitute(rng exRange, arg string) {
 
 	changed, lines := 0, 0
 	e.change(func() {
-		for l := rng.from; l <= rng.to && l < e.Buf.Lines(); l++ {
+		for l, to := rng.from, rng.to; l <= to && l < e.Buf.Lines(); l++ {
 			text := e.Buf.LineString(l)
-			matches := re.FindAllStringIndex(text, -1)
+			matches := re.FindAllStringSubmatchIndex(text, -1)
 			if len(matches) == 0 {
 				continue
 			}
 			if !all {
 				matches = matches[:1]
 			}
-			out := text[:0]
+			// Expanding against the whole line keeps assertions such as \B true.
+			var out []byte
 			last := 0
 			for _, m := range matches {
-				out += text[last:m[0]] + re.ReplaceAllString(text[m[0]:m[1]], repl)
+				out = append(out, text[last:m[0]]...)
+				out = re.ExpandString(out, repl, text, m)
 				last = m[1]
 				changed++
 			}
-			out += text[last:]
+			out = append(out, text[last:]...)
 			lines++
-			e.Buf.Replace(Pos{l, 0}, Pos{l, len([]rune(text))}, out)
+			e.Buf.Replace(Pos{l, 0}, Pos{l, len([]rune(text))}, string(out))
+			// Line breaks in the replacement add lines; skip them and extend the range.
+			added := strings.Count(string(out), "\n")
+			l, to = l+added, to+added
 			e.Cursor = Pos{l, 0}
 		}
 	})
@@ -318,6 +333,8 @@ func (e *Editor) substitute(rng exRange, arg string) {
 	e.Cursor = e.Buf.clamp(e.Cursor, false)
 	e.setMessage(fmt.Sprintf("%s on %s", count(changed, "substitution"), count(lines, "line")))
 }
+
+func isASCIILetter(c byte) bool { return c|0x20 >= 'a' && c|0x20 <= 'z' }
 
 // splitUnescaped splits on a separator that is not backslash-escaped.
 func splitUnescaped(s string, sep rune) []string {

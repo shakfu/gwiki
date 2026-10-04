@@ -454,6 +454,9 @@ func (s *Server) headingItems(d *document, page string, start, end int, partial 
 		if slug {
 			insert = h.Slug
 		}
+		if h.Text == "" || insert == "" {
+			continue
+		}
 		items = append(items, completionItem{
 			Label: h.Text, Kind: itemReference, Detail: strings.Repeat("#", h.Level), FilterText: h.Text + " " + h.Slug,
 			SortText: fmt.Sprintf("%05d", i),

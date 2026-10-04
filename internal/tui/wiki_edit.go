@@ -107,6 +107,8 @@ func (m *WikiModel) offerDraft() {
 		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(answer)), "y") {
 			m.edit.ed.Load(text)
 			m.edit.ed.Dirty = true
+			// The draft's own base, so :w over a page changed since conflicts.
+			m.edit.base = base
 			m.setStatus("draft restored; :w writes it")
 			return nil
 		}
@@ -133,11 +135,39 @@ func (m *WikiModel) writeDraft() error {
 	if err := os.MkdirAll(m.draftsDir(), 0o755); err != nil {
 		return fmt.Errorf("save a draft: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(m.draftsDir(), draftName(e.page)), []byte(e.base+"\n"+e.ed.Text()), 0o644); err != nil {
+	if err := writeAtomic(filepath.Join(m.draftsDir(), draftName(e.page)), []byte(e.base+"\n"+e.ed.Text())); err != nil {
 		return fmt.Errorf("save a draft: %w", err)
 	}
 	e.draftPending = false
 	return nil
+}
+
+// writeAtomic writes a synced temporary file beside name and renames it over
+// name, so an interrupted write leaves the previous file whole.
+func writeAtomic(name string, data []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(name), ".draft-*")
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Chmod(f.Name(), 0o644)
+	}
+	if err == nil {
+		err = os.Rename(f.Name(), name)
+	}
+	if err != nil {
+		if rerr := os.Remove(f.Name()); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
+			err = errors.Join(err, rerr)
+		}
+	}
+	return err
 }
 
 // editSave writes the buffer to the page, and returns what the write left

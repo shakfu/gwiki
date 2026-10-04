@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Fro
 
 ## [Unreleased]
 
+## [0.4.1]
+
 ### Changed
 
 **The browser and agents apply one rule to a write.** Both require the hash a page was read at, write LF line endings with one final newline, and name a checklist item by its text as well as its line. The browser created a page when the hash was empty, and accepted a task without its text. A task line that holds no task is now 400, not 404.

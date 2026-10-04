@@ -95,7 +95,6 @@ type Editor struct {
 
 	pending   []string
 	registers map[rune]register
-	lastReg   rune
 
 	// seq records the keys of a change for ".", and lastChange is the change
 	// it repeats.
@@ -518,22 +517,17 @@ func itoa(n int) string {
 // toggleCheckbox ticks or clears the checklist item on the cursor's line.
 func (e *Editor) toggleCheckbox() {
 	line := e.Buf.LineString(e.Cursor.Line)
-	i := strings.Index(line, "[ ]")
-	box := "[x]"
-	if i < 0 {
-		if i = strings.IndexAny(line, "["); i >= 0 && strings.HasPrefix(strings.ToLower(line[i:]), "[x]") {
-			box = "[ ]"
-		} else {
-			e.fail("no checklist item on this line")
-			return
-		}
-	}
-	_, marker, _, ok := listMarker(line)
+	indent, marker, _, ok := listMarker(line)
 	if !ok || !strings.Contains(marker, "[") {
 		e.fail("no checklist item on this line")
 		return
 	}
-	col := len([]rune(line[:i]))
+	// The item's own box follows the bullet; the indent is ASCII, so bytes are runes.
+	col := len(indent) + 2
+	box := "[x]"
+	if line[col+1] != ' ' {
+		box = "[ ]"
+	}
 	e.change(func() {
 		e.Buf.Replace(Pos{e.Cursor.Line, col}, Pos{e.Cursor.Line, col + 3}, box)
 	})

@@ -20,8 +20,8 @@ func Query(text string) string {
 	terms := Tokenize(text)
 	var b strings.Builder
 	for i, t := range terms {
-		// A term holds only letters, digits and apostrophes, so quoting cannot
-		// be broken out of.
+		// A term holds only letters, digits, marks and apostrophes, so quoting
+		// cannot be broken out of.
 		q := `"` + t + `"`
 		if i > 0 {
 			b.WriteString(" AND ")
@@ -38,9 +38,9 @@ func Query(text string) string {
 // Tokenize splits text into lowercase search terms.
 //
 // Words break on anything that is not a letter or digit, which keeps
-// punctuation and markdown syntax out of the index. Apostrophes are the one
-// exception: splitting "don't" into two terms would make it unfindable by
-// either half.
+// punctuation and markdown syntax out of the index. Apostrophes and combining
+// marks inside a word are the exceptions: splitting "don't" into two terms
+// would make it unfindable by either half.
 func Tokenize(text string) []string {
 	var out []string
 	tokenize(text, func(tok string) { out = append(out, tok) })
@@ -75,7 +75,10 @@ func tokenize(text string, fn func(string)) {
 	}
 
 	for i, r := range text {
-		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && !(r == '\'' && start >= 0) {
+		// A combining mark continues a word, as in FTS5, so "re\u0301sume\u0301"
+		// (NFD) stays one term; FTS5 re-splits the quoted term where it splits.
+		inner := start >= 0 && (r == '\'' || unicode.Is(unicode.M, r))
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && !inner {
 			flush(i)
 			continue
 		}

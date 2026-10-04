@@ -15,6 +15,14 @@ func TestLineReplacesControlCharacters(t *testing.T) {
 		"carriage\x0dreturn":      "carriage?return",
 		"nul\x00byte":             "nul?byte",
 		"osc52\x1b]52;c;aGk=\x07": "osc52?]52;c;aGk=?",
+		"rlo\u202egnp.exe":        "rlo?gnp.exe",
+		"lre\u202aand\u202cpdf":   "lre?and?pdf",
+		"rli\u2067x\u2069":        "rli?x?",
+		"zw\u200bspace":           "zw?space",
+		"word\u2060joiner":        "word?joiner",
+		"bom\ufeff":               "bom?",
+		"zwnj\u200ckept":          "zwnj\u200ckept",
+		"zwj\u200dkept":           "zwj\u200dkept",
 	}
 	for in, want := range cases {
 		if got := Line(in); got != want {

@@ -18,7 +18,9 @@ import (
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
 	extast "github.com/yuin/goldmark/extension/ast"
+	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/util"
 )
 
 // Form is how a link is written.
@@ -89,7 +91,22 @@ type Page struct {
 	Tasks    []Task
 }
 
-var md = goldmark.New(goldmark.WithExtensions(extension.GFM, extension.Footnote, wikiLinks{}))
+var md = goldmark.New(goldmark.WithExtensions(extension.GFM, extension.Footnote, wikiLinks{}),
+	goldmark.WithParserOptions(parser.WithBlockParsers(
+		util.Prioritized(atxHeading{parser.NewATXHeadingParser()}, 599))))
+
+// atxHeading is goldmark's ATX heading parser, but an empty heading keeps an
+// empty segment at its line, where goldmark records no position at all.
+type atxHeading struct{ parser.BlockParser }
+
+func (p atxHeading) Open(parent ast.Node, reader text.Reader, pc parser.Context) (ast.Node, parser.State) {
+	_, seg := reader.PeekLine()
+	n, state := p.BlockParser.Open(parent, reader, pc)
+	if n != nil && n.Lines().Len() == 0 {
+		n.Lines().Append(text.NewSegment(seg.Start, seg.Start))
+	}
+	return n, state
+}
 
 var (
 	taskLine = regexp.MustCompile(`^[ \t]*(?:[-*+]|\d+[.)])[ \t]+\[([ xX])\][ \t]?(.*)$`)
@@ -180,10 +197,7 @@ func Parse(src []byte) *Page {
 // which goldmark returns as a slice of the source when it was not unescaped
 // or tab-expanded.
 func markdownLink(doc, dest []byte, label string, image bool) Link {
-	target, anchor := string(dest), ""
-	if i := strings.IndexByte(target, '#'); i >= 0 {
-		target, anchor = target[:i], target[i+1:]
-	}
+	target, anchor := splitDest(dest)
 	l := Link{Form: FormMarkdown, Image: image, Label: label, Target: target, Anchor: anchor,
 		Start: -1, End: -1, DestStart: -1, DestEnd: -1}
 
@@ -204,6 +218,21 @@ func markdownLink(doc, dest []byte, label string, image bool) Link {
 		l.End = closingParen(doc, l.DestEnd)
 	}
 	return l
+}
+
+// DecodeDest decodes a markdown link destination as goldmark's renderer does
+// for the href: backslash escapes, then numeric and named entity references.
+func DecodeDest(dest []byte) string {
+	return string(util.ResolveEntityNames(util.ResolveNumericReferences(util.UnescapePunctuations(dest))))
+}
+
+// splitDest decodes dest and splits it at the first '#' into target and anchor.
+func splitDest(dest []byte) (target, anchor string) {
+	target = DecodeDest(dest)
+	if i := strings.IndexByte(target, '#'); i >= 0 {
+		target, anchor = target[:i], target[i+1:]
+	}
+	return target, anchor
 }
 
 // openingBracket finds the '[' matching the ']' at close, and the '!' before

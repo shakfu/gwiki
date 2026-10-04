@@ -567,3 +567,28 @@ func TestWikiEditKeepsTheTextOnAConflict(t *testing.T) {
 		t.Fatalf("the other save was overwritten: %q", got)
 	}
 }
+
+// Commands refuse arguments they do not take, rather than ignoring them or
+// reading a flag as a tag.
+func TestWikiRefusesStrayArguments(t *testing.T) {
+	f := wikiFixture(t)
+	for _, args := range [][]string{
+		{"orphans", "extra"},
+		{"tasks", "extra"},
+		{"check", "extra"},
+		{"search", "lexer", "-n", "-5"},
+		{"search", "lexer", "-n", "0"},
+		{"tag", "index", "--json"},
+		{"untag", "index", "--json"},
+	} {
+		if _, _, code := f.run(args...); code != 2 {
+			t.Errorf("gwiki %s: exit %d, want 2", strings.Join(args, " "), code)
+		}
+	}
+	if out := f.mustRun("show", "index"); strings.Contains(out, "--json") {
+		t.Errorf("a flag became a tag:\n%s", out)
+	}
+	if out := f.mustRun("tag", "index", "--", "-odd"); !strings.Contains(out, "#-odd") {
+		t.Errorf("tag after --:\n%s", out)
+	}
+}

@@ -3,6 +3,8 @@ package tui
 import (
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestInputEditing(t *testing.T) {
@@ -152,4 +154,13 @@ func stripANSI(s string) string {
 		i++
 	}
 	return b.String()
+}
+
+// A line input takes a pasted line break or tab as a space.
+func TestInputPasteKeepsOneLine(t *testing.T) {
+	var in input
+	editLine(&in, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a\r\nb\rc\nd\te\x1bf"), Paste: true})
+	if got := in.String(); got != "a b c d ef" {
+		t.Fatalf("paste = %q", got)
+	}
 }

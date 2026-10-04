@@ -17,6 +17,9 @@ func spans(t *testing.T, src string, l Link) {
 	}
 	if l.DestStart >= 0 {
 		dest := src[l.DestStart:l.DestEnd]
+		if l.Form == FormMarkdown {
+			dest = DecodeDest([]byte(dest))
+		}
 		want := l.Target
 		if l.Anchor != "" {
 			want += "#" + l.Anchor
@@ -250,5 +253,57 @@ func TestCheckboxesCarryTheirLine(t *testing.T) {
 	}
 	if tasks := Parse([]byte(src)).Tasks; len(tasks) != 1 || tasks[0].Line != 7 {
 		t.Fatalf("tasks = %+v", tasks)
+	}
+}
+
+// A destination is read as the renderer reads it: escapes and entity
+// references decoded before the split at '#'.
+func TestMarkdownDestinationsAreDecoded(t *testing.T) {
+	src := "[a](no&#95;such.md) [b](x&amp;y.md#s&#101;c) [c](p\\_q.md) [d](a&#35;b.md)\n"
+	p := Parse([]byte(src))
+	want := [][2]string{{"no_such.md", ""}, {"x&y.md", "sec"}, {"p_q.md", ""}, {"a", "b.md"}}
+	if len(p.Links) != len(want) {
+		t.Fatalf("got %d links: %+v", len(p.Links), p.Links)
+	}
+	var seen [][2]string
+	_, err := HTML([]byte(src), func(l Link) Target {
+		seen = append(seen, [2]string{l.Target, l.Anchor})
+		return Target{}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, w := range want {
+		if l := p.Links[i]; l.Target != w[0] || l.Anchor != w[1] {
+			t.Errorf("Parse link %d = %q#%q, want %q#%q", i, l.Target, l.Anchor, w[0], w[1])
+		}
+		if i < len(seen) && seen[i] != w {
+			t.Errorf("HTML resolves link %d as %q, want %q", i, seen[i], w)
+		}
+		spans(t, src, p.Links[i])
+	}
+}
+
+// An empty heading has no text, but it has a line.
+func TestEmptyHeadingHasItsLine(t *testing.T) {
+	p := Parse([]byte("text\n\n#\n\n> ## ##\n\n###   \n"))
+	if len(p.Headings) != 3 {
+		t.Fatalf("headings = %+v", p.Headings)
+	}
+	for i, line := range []int{3, 5, 7} {
+		if h := p.Headings[i]; h.Line != line {
+			t.Errorf("heading %d = %+v, want line %d", i, h, line)
+		}
+	}
+}
+
+// Raw HTML in a page is left out of the rendering, block and inline.
+func TestRawHTMLIsOmitted(t *testing.T) {
+	out, err := HTML([]byte("<script>alert(1)</script>\n\nText <b onclick=\"x()\">bold</b>.\n"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := string(out); strings.Contains(s, "<script") || strings.Contains(s, "&lt;script") || strings.Contains(s, "onclick") {
+		t.Fatalf("HTML = %s", s)
 	}
 }

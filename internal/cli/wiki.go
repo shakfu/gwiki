@@ -315,7 +315,7 @@ func (a *App) linkTable(links []wiki.Link, from bool) {
 			target = ""
 		}
 		t.addStyled([]string{where, l.Written(), status, target},
-			[]string{a.style(ansiDim, where), l.Written(), a.style(ansiRed, status), a.style(ansiDim, target)})
+			[]string{a.style(ansiDim, where), display.Line(l.Written()), a.style(ansiRed, status), a.style(ansiDim, target)})
 	}
 	t.write(a.Stdout)
 }
@@ -326,6 +326,9 @@ func wikiSearch(a *App, args []string) error {
 	asJSON := fs.Bool("json", false, "machine-readable output")
 	if err := parse(fs, args); err != nil {
 		return err
+	}
+	if *limit < 1 {
+		return fmt.Errorf("%w: -n takes a count of at least 1", errUsage)
 	}
 	query := strings.Join(fs.Args(), " ")
 	if strings.TrimSpace(query) == "" {
@@ -433,6 +436,9 @@ func wikiCheck(a *App, args []string) error {
 	if err := parse(fs, args); err != nil {
 		return err
 	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("%w: check takes no arguments", errUsage)
+	}
 	if fix != "" && *asJSON {
 		return fmt.Errorf("%w: --fix and --json do not combine", errUsage)
 	}
@@ -478,7 +484,7 @@ func wikiCheck(a *App, args []string) error {
 			for _, l := range broken {
 				where := fmt.Sprintf("%s:%d:%d", l.Page, l.Line, l.Col)
 				t.addStyled([]string{where, l.Status, l.Written()},
-					[]string{a.style(ansiDim, where), a.style(ansiRed, l.Status), l.Written()})
+					[]string{a.style(ansiDim, where), a.style(ansiRed, l.Status), display.Line(l.Written())})
 			}
 			for _, d := range drifted {
 				where := fmt.Sprintf("%s:%d:%d", d.Page, d.Line, d.Col)
@@ -487,12 +493,12 @@ func wikiCheck(a *App, args []string) error {
 					written += " -> " + d.Offer.New
 				}
 				t.addStyled([]string{where, d.Status, written},
-					[]string{a.style(ansiDim, where), a.style(ansiYellow, d.Status), written})
+					[]string{a.style(ansiDim, where), a.style(ansiYellow, d.Status), display.Line(written)})
 			}
 			for _, s := range skipped {
 				where := path.Join(wiki.DirName, wiki.PagesDir, s.Path)
 				t.addStyled([]string{where, "skipped", s.Reason},
-					[]string{a.style(ansiDim, where), a.style(ansiRed, "skipped"), s.Reason})
+					[]string{a.style(ansiDim, where), a.style(ansiRed, "skipped"), display.Line(s.Reason)})
 			}
 			t.write(a.Stdout)
 		}
@@ -607,6 +613,9 @@ func wikiOrphans(a *App, args []string) error {
 	if err := parse(fs, args); err != nil {
 		return err
 	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("%w: orphans takes no arguments", errUsage)
+	}
 	return a.withWiki(func(w *wiki.Wiki) error {
 		pages, err := w.Orphans()
 		if err != nil {
@@ -626,6 +635,9 @@ func wikiTasks(a *App, args []string) error {
 	asJSON := fs.Bool("json", false, "machine-readable output")
 	if err := parse(fs, args); err != nil {
 		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("%w: tasks takes no arguments", errUsage)
 	}
 	switch *status {
 	case "", "open", "doing", "done":
@@ -654,7 +666,7 @@ func wikiTasks(a *App, args []string) error {
 				box = "[~]"
 			}
 			t.addStyled([]string{where, box, tk.Due, tk.Priority, tk.Text},
-				[]string{a.style(ansiDim, where), box, a.style(ansiYellow, tk.Due), a.style(ansiRed, tk.Priority), tk.Text})
+				[]string{a.style(ansiDim, where), box, a.style(ansiYellow, tk.Due), a.style(ansiRed, tk.Priority), display.Line(tk.Text)})
 		}
 		t.write(a.Stdout)
 		return nil
@@ -870,7 +882,7 @@ func (a *App) editTable(edits []wiki.Edit) {
 	var t table
 	for _, e := range edits {
 		where := fmt.Sprintf("%s:%d", e.Page, e.Line)
-		t.addStyled([]string{where, e.Old, "->", e.New}, []string{a.style(ansiDim, where), e.Old, "->", a.style(ansiGreen, e.New)})
+		t.addStyled([]string{where, e.Old, "->", e.New}, []string{a.style(ansiDim, where), display.Line(e.Old), "->", a.style(ansiGreen, e.New)})
 	}
 	t.write(a.Stdout)
 }
@@ -915,6 +927,13 @@ func wikiRemove(a *App, args []string) error {
 }
 
 func wikiTag(a *App, args []string, add bool) error {
+	// No flags, so a stray one is refused rather than taken as a tag; -- passes
+	// a tag that begins with a dash.
+	fs := a.flags("tag")
+	if err := parse(fs, args); err != nil {
+		return err
+	}
+	args = fs.Args()
 	if len(args) < 2 {
 		return fmt.Errorf("%w: name a page and at least one tag; quote a title with spaces", errUsage)
 	}
