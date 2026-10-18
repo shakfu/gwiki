@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Fro
 
 ## [Unreleased]
 
+### Fixed
+
+**Four `internal/wiki` tests added in 0.4.1 failed.** The changes they test were incomplete:
+
+- **A markdown link is shown and matched as written.** 0.4.1 stored the decoded destination, so `my\_page.md` showed as `my_page.md`. Drift detection searches the page for that text, so it skipped such links. The cache now records the source destination; schema 9 rebuilds it. `classify` no longer unescapes backslashes a second time.
+
+- **A link to a directory follows its pages.** Adding the first page under `media/` left `[m](media/)` a file link. Removing the last page left it a missing page. Refresh now reclassifies links to every directory above an added or removed page.
+
+- **Recent pages show their git author for a non-ASCII name.** git quoted `café.md` as `"caf\303\251.md"`, which matched no page. `log` and `status` now run with `-z`.
+
+- **`gwiki done "call at 10:30"` finds the task.** A trailing `:digits` was read as `page:line`, and the missing page `call at 10` ended the lookup. Text matching now runs when no page matches.
+
 ## [0.4.1]
 
 ### Changed

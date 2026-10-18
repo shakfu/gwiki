@@ -363,26 +363,33 @@ func (w *Wiki) Tag(page string, add, remove []string) (Warnings, error) {
 	return w.Write(page, out, hash)
 }
 
+// taskOnLine is the checklist item on a line of a page.
+func (w *Wiki) taskOnLine(page string, line int) (Task, error) {
+	tasks, err := w.Tasks(TaskFilter{Page: page})
+	if err != nil {
+		return Task{}, err
+	}
+	for _, t := range tasks {
+		if t.Line == line {
+			return t, nil
+		}
+	}
+	return Task{}, fmt.Errorf("no checklist item on line %d of %s", line, page)
+}
+
 // FindTask resolves a task reference: "page:line" for a checklist item, a task
 // page's path, title or file name, or a fragment of a checklist item's text.
 func (w *Wiki) FindTask(ref string) (Task, error) {
 	ref = strings.TrimSpace(ref)
 	if i := strings.LastIndexByte(ref, ':'); i > 0 {
 		if line, err := strconv.Atoi(ref[i+1:]); err == nil {
-			info, err := w.Find(ref[:i])
-			if err != nil {
-				return Task{}, err
-			}
-			tasks, err := w.Tasks(TaskFilter{Page: info.Path})
-			if err != nil {
-				return Task{}, err
-			}
-			for _, t := range tasks {
-				if t.Line == line {
-					return t, nil
+			// With no such page, "call at 10:30" is task text.
+			if info, err := w.Find(ref[:i]); !errors.Is(err, errNoPage) {
+				if err != nil {
+					return Task{}, err
 				}
+				return w.taskOnLine(info.Path, line)
 			}
-			return Task{}, fmt.Errorf("no checklist item on line %d of %s", line, info.Path)
 		}
 	}
 

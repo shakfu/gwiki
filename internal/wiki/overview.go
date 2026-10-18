@@ -1,8 +1,6 @@
 package wiki
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"os"
 	"os/exec"
@@ -102,27 +100,30 @@ func (w *Wiki) gitHistory() (map[string]commit, map[string]bool) {
 		return out, err == nil
 	}
 	rel := func(p string) (string, bool) {
-		p = strings.Trim(p, `"`)
 		r, ok := strings.CutPrefix(p, pages+"/")
 		return r, ok && strings.HasSuffix(r, ".md")
 	}
 
-	logOut, ok := run("log", "-n", strconv.Itoa(historyCommits), "--format=%x1e%ct%x1f%an", "--name-only", "--no-renames", "--", pages)
+	// -z leaves paths unquoted, so a page such as café.md matches its file.
+	logOut, ok := run("log", "-z", "-n", strconv.Itoa(historyCommits), "--format=%x1e%ct%x1f%an", "--name-only", "--no-renames", "--", pages)
 	if !ok {
 		return nil, nil
 	}
 	commits := map[string]commit{}
 	var cur commit
-	sc := bufio.NewScanner(bytes.NewReader(logOut))
-	for sc.Scan() {
-		line := sc.Text()
-		if head, found := strings.CutPrefix(line, "\x1e"); found {
+	afterHead := false
+	for _, field := range strings.Split(string(logOut), "\x00") {
+		if head, found := strings.CutPrefix(field, "\x1e"); found {
 			secs, name, _ := strings.Cut(head, "\x1f")
 			n, _ := strconv.ParseInt(secs, 10, 64)
-			cur = commit{author: name, when: time.Unix(n, 0)}
+			cur, afterHead = commit{author: name, when: time.Unix(n, 0)}, true
 			continue
 		}
-		if r, ok := rel(line); ok {
+		if afterHead {
+			// A newline separates a commit's header from its first file.
+			field, afterHead = strings.TrimPrefix(field, "\n"), false
+		}
+		if r, ok := rel(field); ok {
 			if _, seen := commits[r]; !seen {
 				commits[r] = cur
 			}
@@ -130,16 +131,17 @@ func (w *Wiki) gitHistory() (map[string]commit, map[string]bool) {
 	}
 
 	dirty := map[string]bool{}
-	if statusOut, ok := run("status", "--porcelain", "--untracked-files=all", "--", pages); ok {
-		for _, line := range strings.Split(string(statusOut), "\n") {
-			if len(line) < 4 {
+	if statusOut, ok := run("status", "--porcelain", "-z", "--untracked-files=all", "--", pages); ok {
+		fields := strings.Split(string(statusOut), "\x00")
+		for i := 0; i < len(fields); i++ {
+			entry := fields[i]
+			if len(entry) < 4 {
 				continue
 			}
-			p := line[3:]
-			if _, after, found := strings.Cut(p, " -> "); found {
-				p = after
+			if entry[0] == 'R' || entry[0] == 'C' {
+				i++ // the source path follows as its own field
 			}
-			if r, ok := rel(p); ok {
+			if r, ok := rel(entry[3:]); ok {
 				dirty[r] = true
 			}
 		}

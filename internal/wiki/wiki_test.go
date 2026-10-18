@@ -568,9 +568,10 @@ func TestRecentReadsGit(t *testing.T) {
 		}
 	}
 	git("init", "-q")
-	put(t, w, root, map[string]string{"committed": "# Committed\n", "edited": "# Edited\n", "caf\u00e9": "# Caf\u00e9\n"})
+	put(t, w, root, map[string]string{"committed": "# Committed\n", "edited": "# Edited\n", "caf\u00e9": "# Caf\u00e9\n", "moved": "# Moved\n"})
 	git("add", ".gwiki/wiki")
 	git("commit", "-q", "-m", "pages")
+	git("mv", ".gwiki/wiki/moved.md", ".gwiki/wiki/moved-again.md")
 	put(t, w, root, map[string]string{"edited": "# Edited again\n", "new": "# New\n"})
 
 	recent, err := w.Recent(10)
@@ -592,5 +593,20 @@ func TestRecentReadsGit(t *testing.T) {
 	}
 	if c := by["new"]; c.Author != "" || !c.Uncommitted {
 		t.Errorf("new = %+v", c)
+	}
+	// git status -z lists a staged rename as the new path, then the old one.
+	if c := by["moved-again"]; !c.Uncommitted {
+		t.Errorf("moved-again = %+v", c)
+	}
+}
+
+// A destination's backslash escapes are decoded once: <a\\_b.md> names the
+// page a\_b, not a_b.
+func TestDoubleBackslashDecodesOnce(t *testing.T) {
+	w, root := emptyWiki(t)
+	put(t, w, root, map[string]string{"a_b": "# Plain\n", `a\_b`: "# Slashed\n", "index": "[x](<a\\\\_b.md>)\n"})
+	links, err := w.Links("index")
+	if err != nil || len(links) != 1 || links[0].Resolved != `a\_b` || links[0].Written() != `a\\_b.md` {
+		t.Fatalf("links = %+v, %v", links, err)
 	}
 }

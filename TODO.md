@@ -6,9 +6,7 @@ IDs refer to `REVIEW.md` (commit `2cdc3d9`, 2026-09-27), which holds the evidenc
 
 ## High
 
-
 ## Medium
-
 
 - [x] W4. `Promote` slices before it checks bounds; a stale `Task` panics. `internal/wiki/ops.go:443,449`
 

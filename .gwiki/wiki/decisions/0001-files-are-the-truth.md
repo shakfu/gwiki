@@ -19,4 +19,4 @@ The notes database: rows in a committed SQLite file.
 - Pages stay readable in any editor and on GitHub.
 - The cache can always be rebuilt, so it never needs a migration.
 
-See [[Cache and refresh]] and [the design](/docs/dev/wiki-design.md#L49).
+See [[Cache and refresh]] and [the design](/docs/dev/wiki-design.md#L55).

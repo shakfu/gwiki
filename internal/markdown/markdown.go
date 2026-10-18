@@ -42,8 +42,9 @@ type Link struct {
 	Ref bool
 
 	Label  string
-	Target string // as written, before any '#'
-	Anchor string // after '#', without it
+	Target string // decoded, before any '#'
+	Anchor string // decoded, after '#', without it
+	Dest   string // a markdown link's destination as written
 
 	// Start and End bound the whole link; DestStart and DestEnd bound the
 	// target and anchor, which is what a rename rewrites. Either pair is -1
@@ -198,7 +199,7 @@ func Parse(src []byte) *Page {
 // or tab-expanded.
 func markdownLink(doc, dest []byte, label string, image bool) Link {
 	target, anchor := splitDest(dest)
-	l := Link{Form: FormMarkdown, Image: image, Label: label, Target: target, Anchor: anchor,
+	l := Link{Form: FormMarkdown, Image: image, Label: label, Target: target, Anchor: anchor, Dest: string(dest),
 		Start: -1, End: -1, DestStart: -1, DestEnd: -1}
 
 	off, ok := offsetIn(doc, dest)

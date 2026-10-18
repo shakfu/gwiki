@@ -17,7 +17,9 @@ import (
 // 5: a checklist item's text no longer holds its due: date.
 // 6: skipped lists the files a refresh left out.
 // 7: files records the inode change time.
-const schemaVersion = 8 // 8: markdown link destinations decoded; empty headings keep their line.
+// 8: markdown link destinations decoded; empty headings keep their line.
+// 9: links records a markdown destination as written.
+const schemaVersion = 9
 
 // busyTimeout is how long, in milliseconds, a connection waits for another
 // writer's lock.
@@ -92,6 +94,7 @@ CREATE TABLE links (
 	label      TEXT NOT NULL,
 	target     TEXT NOT NULL,
 	anchor     TEXT NOT NULL,
+	dest       TEXT NOT NULL,
 	kind       TEXT NOT NULL,
 	resolved   TEXT NOT NULL,
 	line_from  INTEGER NOT NULL,

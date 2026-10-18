@@ -7,7 +7,7 @@ tags: [architecture]
 
 ### Resolution
 
-A `[[wiki]]` link is resolved by [the resolver](/internal/wiki/resolve.go#L256), trying in order:
+A `[[wiki]]` link is resolved by [the resolver](/internal/wiki/resolve.go#L254), trying in order:
 
 1. a path, or a directory's path naming its README;
 2. a title;
@@ -37,6 +37,6 @@ A markdown link is a path relative to its page, or to the repository when it sta
 
 ### Moves
 
-[PlanMove](/internal/wiki/move.go#L63) rewrites each link to a moved page in its own form. A wiki link that still resolves is left alone; a link to a section's directory stays a directory link.
+[PlanMove](/internal/wiki/move.go#L62) rewrites each link to a moved page in its own form. A wiki link that still resolves is left alone; a link to a section's directory stays a directory link.
 
 Back to [[Architecture]].

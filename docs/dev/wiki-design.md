@@ -1,50 +1,56 @@
 # gnotes as a project wiki
 
-Status: proposal, 2026-09-15. Supersedes the storage model in
-[sqldb-variant.md](sqldb-variant.md) section 12.
+Status: proposal, 2026-09-15. Supersedes the storage model in [sqldb-variant.md](sqldb-variant.md) section 12.
 
-**Renamed, 2026-09-16.** The project is now gwiki. This document predates the
-rename: read `gnotes wiki <command>` as `gwiki <command>`, `.gnotes/` as
-`.gwiki/`, and the notes commands as `gwiki notes <command>`. See "Cutover"
-in section 17.
+**Renamed, 2026-09-16.** The project is now gwiki. This document predates the rename: read `gnotes wiki <command>` as `gwiki <command>`, `.gnotes/` as `.gwiki/`, and the notes commands as `gwiki notes <command>`. See "Cutover" in section 17.
 
 Decided:
 
-- **Markdown files in the repository are the source of truth.** SQLite is a
-  derived cache, local to each clone and never committed.
+- **Markdown files in the repository are the source of truth.** SQLite is a derived cache, local to each clone and never committed.
+
 - **Writers are the developer and code agents.** No accounts, no permissions.
+
 - **Pages live in `.gnotes/wiki`**, committed; `.gnotes/cache.db` is gitignored.
+
 - **Both link forms**: `[[wiki]]` links and markdown links.
+
 - **gnotes offers to fix broken links.**
+
 - **Tasks are checklist items in pages, and pages of their own.**
+
 - **gnotes has its own editor**, and a page may also be edited outside it.
+
 - **Line anchors are checked for range only.**
 
 Section 18 lists what is still open.
 
 ## 1. Goal
 
-A knowledge base of markdown pages, stored and reviewed with the project it
-describes.
+A knowledge base of markdown pages, stored and reviewed with the project it describes.
 
 - Pages link to each other and to files in the repository.
-- gnotes knows every link in both directions, reports broken ones, and offers
-  fixes.
-- Search answers within a keystroke in the terminal interface and quickly on
-  the command line.
+
+- gnotes knows every link in both directions, reports broken ones, and offers fixes.
+
+- Search answers within a keystroke in the terminal interface and quickly on the command line.
+
 - Writing and editing markdown happens in gnotes.
+
 - A code agent reads and writes the same pages through the same rules.
-- The pages stay useful without gnotes: in another editor, in `git diff`, and
-  rendered on GitHub.
+
+- The pages stay useful without gnotes: in another editor, in `git diff`, and rendered on GitHub.
 
 Non-goals:
 
 - Real-time collaboration, or any sync other than git.
+
 - Committing, or any git write. Committing is the developer's action.
+
 - Time travel inside gnotes. History is `git log`.
+
 - Checking external URLs, at least in the first version.
-- Markdown beyond CommonMark, GitHub tables and task lists, footnotes, front
-  matter and wiki links.
+
+- Markdown beyond CommonMark, GitHub tables and task lists, footnotes, front matter and wiki links.
 
 ## 2. Why files, and what that costs
 
@@ -58,11 +64,10 @@ Non-goals:
 Costs:
 
 - The `changes` table, `log` and `ls --at` go. History comes from git.
-- Most of `state`, `session`, `event`, `rank` and the current `store` are
-  replaced (section 15).
-- Any process can change a page, so the cache detects changes rather than
-  recording them (section 7), and every write checks for a concurrent one
-  (section 10).
+
+- Most of `state`, `session`, `event`, `rank` and the current `store` are replaced (section 15).
+
+- Any process can change a page, so the cache detects changes rather than recording them (section 7), and every write checks for a concurrent one (section 10).
 
 ## 3. Layout
 
@@ -83,12 +88,14 @@ project/
 ```
 
 - Only `.md` files under `.gnotes/wiki` are pages. Directories nest.
+
 - File links may point anywhere in the repository.
+
 - `.gnotes` is found by walking up from the working directory, as now.
+
 - Global notes keep working: `gnotes -g` uses the same layout under `~/notes`.
-- **Trade-off of a dot directory:** `rg` and many fuzzy finders skip hidden
-  directories by default, so pages are less visible to other tools than
-  under `wiki/`. GitHub shows them normally.
+
+- **Trade-off of a dot directory:** `rg` and many fuzzy finders skip hidden directories by default, so pages are less visible to other tools than under `wiki/`. GitHub shows them normally.
 
 ## 4. Pages
 
@@ -106,16 +113,13 @@ The lexer tokenizes input. See [[Grammar ambiguity]] and
 - [ ] benchmark the lexer due:2026-08-21
 ```
 
-- **Identity is the path**, relative to `.gnotes/wiki`, without `.md`:
-  `lexer/design-sketch`. No id in the file: a hand-written or agent-written page
-  cannot get one wrong.
-- **Title:** front matter `title`, else the first `#` heading, else the file
-  name. This is gopherwiki's rule (`indexTitleAndBody`).
-- **Front matter is optional YAML.** Unknown keys are kept and ignored. A
-  leading `---` without a closing delimiter, or whose block is not a mapping,
-  is body text, not front matter.
-- **Tags** come from front matter `tags`. Inline `#tag` is not parsed: in
-  markdown it collides with headings and with issue references such as `#123`.
+- **Identity is the path**, relative to `.gnotes/wiki`, without `.md`: `lexer/design-sketch`. No id in the file: a hand-written or agent-written page cannot get one wrong.
+
+- **Title:** front matter `title`, else the first `#` heading, else the file name. This is gopherwiki's rule (`indexTitleAndBody`).
+
+- **Front matter is optional YAML.** Unknown keys are kept and ignored. A leading `---` without a closing delimiter, or whose block is not a mapping, is body text, not front matter.
+
+- **Tags** come from front matter `tags`. Inline `#tag` is not parsed: in markdown it collides with headings and with issue references such as `#123`.
 
 ### Tasks
 
@@ -126,13 +130,9 @@ Two forms, listed together by `gnotes tasks`:
 | checklist item | `- [ ] text` in any page | done; optional inline `due:YYYY-MM-DD` |
 | task page | a page with `type: task` in front matter | `status` (open, doing, done), `priority`, `due`, `assignees`, plus a body |
 
-A checklist item keeps a small task beside the note it came from. A task page
-holds a task with discussion, links and history of its own. Converting one to
-the other is a command (section 9).
+A checklist item keeps a small task beside the note it came from. A task page holds a task with discussion, links and history of its own. Converting one to the other is a command (section 9).
 
-A checklist item is addressed by page and line. After an outside edit shifts
-lines, gnotes finds it again by its text; an ambiguous match is reported, not
-guessed.
+A checklist item is addressed by page and line. After an outside edit shifts lines, gnotes finds it again by its text; an ambiguous match is reported, not guessed.
 
 ## 5. Links
 
@@ -152,41 +152,31 @@ guessed.
 
 Both forms are first-class. They differ in what survives a move:
 
-- A `[[wiki]]` link names a page by title or path, so it survives moving the
-  linking page. It does not render as a link on GitHub.
-- A markdown link renders everywhere, but it is a relative path, so it breaks
-  when either end moves unless gnotes rewrites it.
+- A `[[wiki]]` link names a page by title or path, so it survives moving the linking page. It does not render as a link on GitHub.
 
-gnotes writes the form the writer chose. The editor inserts `[[` completions as
-wiki links and `[` path completions as markdown links, and a rename rewrites
-each link in its own form.
+- A markdown link renders everywhere, but it is a relative path, so it breaks when either end moves unless gnotes rewrites it.
+
+gnotes writes the form the writer chose. The editor inserts `[[` completions as wiki links and `[` path completions as markdown links, and a rename rewrites each link in its own form.
 
 ### Parsing
 
-Links come from the goldmark syntax tree, so a link inside a code span or a
-fenced or indented code block is not a link. Every link keeps its line, column
-and byte span in the source, because a rename or a fix rewrites it in place.
+Links come from the goldmark syntax tree, so a link inside a code span or a fenced or indented code block is not a link. Every link keeps its line, column and byte span in the source, because a rename or a fix rewrites it in place.
 
-gopherwiki's `WikiLinkExtension` is the starting point (section 16). It needs
-two changes: the node must carry its source segment, and `#heading` must be
-split from the target. Its `ExtractWikiLinks` is not used: it matches a regular
-expression over the whole page, so it counts `[[...]]` inside code.
+gopherwiki's `WikiLinkExtension` is the starting point (section 16). It needs two changes: the node must carry its source segment, and `#heading` must be split from the target. Its `ExtractWikiLinks` is not used: it matches a regular expression over the whole page, so it counts `[[...]]` inside code.
 
 ### Resolution
 
 A wiki link target is tried in order, case-insensitively:
 
 1. a path relative to `.gnotes/wiki`, with or without `.md`;
+
 2. an exact page title;
+
 3. a file name without extension, with spaces read as hyphens.
 
-The first rule that matches exactly one page wins. More than one match is
-**ambiguous**, reported like a broken link rather than guessed. Rule 3 matches
-gopherwiki, which turns `[[Design Sketch]]` into the path `design-sketch`, so
-its pages resolve the same way here.
+The first rule that matches exactly one page wins. More than one match is **ambiguous**, reported like a broken link rather than guessed. Rule 3 matches gopherwiki, which turns `[[Design Sketch]]` into the path `design-sketch`, so its pages resolve the same way here.
 
-A markdown link is a relative path from the page's directory, as GitHub reads
-it. A path that leaves the repository is broken.
+A markdown link is a relative path from the page's directory, as GitHub reads it. A path that leaves the repository is broken.
 
 ### Broken links and fixes
 
@@ -202,22 +192,21 @@ it. A path that leaves the repository is broken.
 Offers are ranked, never applied without a choice:
 
 - `gnotes check` lists broken links with their offers.
-- `gnotes check --fix` asks for each link in turn; `--fix=first` takes the top
-  offer where exactly one exists, for scripts.
+
+- `gnotes check --fix` asks for each link in turn; `--fix=first` takes the top offer where exactly one exists, for scripts.
+
 - The terminal interface shows offers in the broken-links panel.
+
 - Agents get the offers in the `check` result and apply one with `fix_link`.
 
-A fix rewrites the link's byte span in its own form, through the same write
-path as any edit (section 10).
+A fix rewrites the link's byte span in its own form, through the same write path as any edit (section 10).
 
-A line anchor is checked for range only. A line that moved but still exists is
-not detected. Superseded: `check` compares line anchors with git history; see
+A line anchor is checked for range only. A line that moved but still exists is not detected. Superseded: `check` compares line anchors with git history; see
 [anchor-drift.md](anchor-drift.md).
 
 ## 6. The cache
 
-`.gnotes/cache.db`, SQLite with WAL. It is derived: a schema-version mismatch or
-a corrupt file is deleted and rebuilt, never reported as an error.
+`.gnotes/cache.db`, SQLite with WAL. It is derived: a schema-version mismatch or a corrupt file is deleted and rebuilt, never reported as an error.
 
 ```sql
 CREATE TABLE files    (path TEXT PRIMARY KEY, size INTEGER, mtime_ns INTEGER, hash TEXT);
@@ -236,36 +225,34 @@ CREATE VIRTUAL TABLE pages_fts USING fts5 (title, headings, tags, body,
 ```
 
 - Backlinks are `links WHERE target = ?`. Orphans are pages with none.
+
 - Broken links are `links WHERE status != 'ok'`.
-- WAL, not the rollback journal the committed database needed: the cache is
-  never committed, and WAL lets the terminal interface and browser view read
-  while another process refreshes.
-- Drafts live in `.gnotes/drafts/`, not in the cache, so rebuilding the cache
-  cannot lose unsaved text.
+
+- WAL, not the rollback journal the committed database needed: the cache is never committed, and WAL lets the terminal interface and browser view read while another process refreshes.
+
+- Drafts live in `.gnotes/drafts/`, not in the cache, so rebuilding the cache cannot lose unsaved text.
 
 ## 7. Freshness
 
 Every command brings the cache up to date before answering:
 
 1. List the directories under `.gnotes/wiki`.
+
 2. Stat every `.md` file on a pool of goroutines.
-3. Compare a fingerprint of every page's name, size and modification time with
-   the stored one. If it matches, stop.
-4. Take the write lock and compare again: another process may have indexed the
-   same change meanwhile.
-5. Compare size and modification time with `files`. Re-read and re-parse the
-   pages that differ; delete the rows of pages that are gone.
-6. Insert the changed pages' rows, resolving their links against every page as
-   it will be after this refresh.
-7. Re-resolve links on other pages whose target names a page added, changed or
-   removed, by path, title or file name.
 
-A removed page's content hash is kept, for the last 1,000 removals, so a page
-that reappears elsewhere with the same content is a rename, in the same refresh
-or a later one.
+3. Compare a fingerprint of every page's name, size and modification time with the stored one. If it matches, stop.
 
-A page edited twice within the filesystem's timestamp resolution, keeping its
-size, is not seen as changed. `cache --rebuild` recovers.
+4. Take the write lock and compare again: another process may have indexed the same change meanwhile.
+
+5. Compare size and modification time with `files`. Re-read and re-parse the pages that differ; delete the rows of pages that are gone.
+
+6. Insert the changed pages' rows, resolving their links against every page as it will be after this refresh.
+
+7. Re-resolve links on other pages whose target names a page added, changed or removed, by path, title or file name.
+
+A removed page's content hash is kept, for the last 1,000 removals, so a page that reappears elsewhere with the same content is a rename, in the same refresh or a later one.
+
+A page edited twice within the filesystem's timestamp resolution, keeping its size, is not seen as changed. `cache --rebuild` recovers.
 
 Measured on 5,000 pages in 50 directories, warm cache, 16-thread Linux:
 
@@ -275,43 +262,31 @@ Measured on 5,000 pages in 50 directories, warm cache, 16-thread Linux:
 | list directories, then stat on 16 goroutines | 7-9 ms |
 | read all 5,000 files (9 MB) | 73-89 ms |
 
-An unchanged wiki of 5,000 pages costs about 9 ms per command before the query,
-and a first build about 1.9 s (section 17, phase 1).
+An unchanged wiki of 5,000 pages costs about 9 ms per command before the query, and a first build about 1.9 s (section 17, phase 1).
 
-File targets outside the wiki can change without any page changing. Refresh
-re-checks file targets only for the pages it re-parsed; `gnotes check` stats
-every distinct file target and is the command to trust.
+File targets outside the wiki can change without any page changing. Refresh re-checks file targets only for the pages it re-parsed; `gnotes check` stats every distinct file target and is the command to trust.
 
-The terminal interface and browser view run the same refresh on a one-second
-poll, as the current interface does, so an outside edit or an agent's write
-appears within a second.
+The terminal interface and browser view run the same refresh on a one-second poll, as the current interface does, so an outside edit or an agent's write appears within a second.
 
 ## 8. Search
 
-The crossover measurements show where search time goes today: `search` costs
-the same as `ls` at every size, 13.2 against 13.2 ms at 1,000 tasks. The FTS5
-query is not the cost; loading every row at startup is.
+The crossover measurements show where search time goes today: `search` costs the same as `ls` at every size, 13.2 against 13.2 ms at 1,000 tasks. The FTS5 query is not the cost; loading every row at startup is.
 
 With the cache:
 
-- The command line runs the freshness check and one FTS5 query. Nothing else
-  is loaded.
-- The terminal interface and browser view keep one connection and re-run the
-  query per keystroke.
-- Ranking: BM25 with title above headings above tags above body; a title
-  containing the whole query ranks first, as now. Typed words are quoted, as
-  `search.Query` does now.
-- Snippets use FTS5 `snippet()` with control characters as match markers,
-  replaced after escaping, as gopherwiki's `SearchPages` does. The terminal
-  interface turns the markers into styling, the browser view into `<mark>`.
+- The command line runs the freshness check and one FTS5 query. Nothing else is loaded.
 
-Target, checked in phase 1: `gnotes search` under 15 ms median at 5,000 pages,
-process start included, against 45 ms for today's build.
+- The terminal interface and browser view keep one connection and re-run the query per keystroke.
+
+- Ranking: BM25 with title above headings above tags above body; a title containing the whole query ranks first, as now. Typed words are quoted, as `search.Query` does now.
+
+- Snippets use FTS5 `snippet()` with control characters as match markers, replaced after escaping, as gopherwiki's `SearchPages` does. The terminal interface turns the markers into styling, the browser view into `<mark>`.
+
+Target, checked in phase 1: `gnotes search` under 15 ms median at 5,000 pages, process start included, against 45 ms for today's build.
 
 ## 9. Commands
 
-Until phase 4 these are `gnotes wiki <command>`, beside the notes commands they
-replace.
+Until phase 4 these are `gnotes wiki <command>`, beside the notes commands they replace.
 
 | command | does |
 |---|---|
@@ -334,119 +309,93 @@ replace.
 | `cache --rebuild` | delete and rebuild the cache |
 | `ui`, `serve`, `mcp` | the other front ends |
 
-A page is named by path, title or a fragment of either. An ambiguous name lists
-the candidates, as now.
+A page is named by path, title or a fragment of either. An ambiguous name lists the candidates, as now.
 
 ## 10. Writes
 
-Every write, from the command line, the editor, the browser view or an agent,
-goes through one function:
+Every write, from the command line, the editor, the browser view or an agent, goes through one function:
 
 1. The caller passes the content hash it last read (the base).
-2. The page is re-read. If its hash differs from the base, the write stops with
-   a conflict and the current content; nothing is written.
-3. Otherwise every page in the batch goes to a synced temporary file, and only
-   then are they renamed: new pages first, removals last. No path with a
-   symlink in it is read or written.
-4. The cache is refreshed. The result is tiered by what landed: nothing (an
-   error), part of the batch (`ErrPartial`, naming both parts), or all of it
-   (success, with `Warnings` when the refresh failed or files are skipped).
 
-This is gopherwiki's optimistic lock (`SavePage` with a base revision), keyed
-on content hash instead of a commit, since gnotes does not commit.
+2. The page is re-read. If its hash differs from the base, the write stops with a conflict and the current content; nothing is written.
+
+3. Otherwise every page in the batch goes to a synced temporary file, and only then are they renamed: new pages first, removals last. No path with a symlink in it is read or written.
+
+4. The cache is refreshed. The result is tiered by what landed: nothing (an error), part of the batch (`ErrPartial`, naming both parts), or all of it (success, with `Warnings` when the refresh failed or files are skipped).
+
+This is gopherwiki's optimistic lock (`SavePage` with a base revision), keyed on content hash instead of a commit, since gnotes does not commit.
 
 - **gnotes never stages or commits.**
-- **`mv` rewrites links from their byte spans,** not by searching text, in the
-  link's own form. `--dry-run` prints every file and line it would change. A
-  link that becomes ambiguous after the rename is reported, not rewritten.
-- **`rm` has no undo in gnotes.** Recovery is `git checkout`. The refusal while
-  backlinks exist replaces soft deletion.
-- **Front matter edits** go through a YAML node tree, keeping key order and
-  comments where the library allows.
-- **A multi-file operation** (`mv`, a fix across pages) checks every base first
-  and writes only if none has changed. Between the check and the last rename,
-  another writer can still interleave; the window is milliseconds and the
-  result is reported, not silently merged.
+
+- **`mv` rewrites links from their byte spans,** not by searching text, in the link's own form. `--dry-run` prints every file and line it would change. A link that becomes ambiguous after the rename is reported, not rewritten.
+
+- **`rm` has no undo in gnotes.** Recovery is `git checkout`. The refusal while backlinks exist replaces soft deletion.
+
+- **Front matter edits** go through a YAML node tree, keeping key order and comments where the library allows.
+
+- **A multi-file operation** (`mv`, a fix across pages) checks every base first and writes only if none has changed. Between the check and the last rename, another writer can still interleave; the window is milliseconds and the result is reported, not silently merged.
 
 ## 11. The editor
 
-gnotes edits pages itself. A page may still be changed by another editor or an
-agent while it is open, which the editor must handle.
+gnotes edits pages itself. A page may still be changed by another editor or an agent while it is open, which the editor must handle.
 
 ### Behaviour
 
-- Soft-wrapped markdown with styling for headings, emphasis, code, links and
-  task checkboxes; broken links underlined.
-- **List continuation on Enter** for bullets, numbered items (renumbering the
-  rest of the list), checklists and quotes; Enter on an empty item ends the
-  list. gopherwiki's `web/editor/markdown-list.js` is the specification: its
-  rules are ported, not its CodeMirror code.
-- **`[[` completion** from page titles and paths; `#` after a target completes
-  headings. **`[`...`](` completion** from repository paths.
+- Soft-wrapped markdown with styling for headings, emphasis, code, links and task checkboxes; broken links underlined.
+
+- **List continuation on Enter** for bullets, numbered items (renumbering the rest of the list), checklists and quotes; Enter on an empty item ends the list. gopherwiki's `web/editor/markdown-list.js` is the specification: its rules are ported, not its CodeMirror code.
+
+- **`[[` completion** from page titles and paths; `#` after a target completes headings. **`[`...`](` completion** from repository paths.
+
 - Modal, vim-style keys (below).
+
 - A preview toggle, rendered as in the reader (section 12).
 
 ### Keys
 
-The editor is modal and follows vim, so a vim user's habits work. Where vim
-and Neovim differ, such as `Y`, it follows vim. It reads no vimrc.
+The editor is modal and follows vim, so a vim user's habits work. Where vim and Neovim differ, such as `Y`, it follows vim. It reads no vimrc.
 
-- **Modes:** normal, insert, replace (`R`), visual (`v`, `V`), operator-pending,
-  and the `:` and `/` lines.
+- **Modes:** normal, insert, replace (`R`), visual (`v`, `V`), operator-pending, and the `:` and `/` lines.
+
 - **Counts** before motions, operators and commands: `3j`, `d2w`, `2dd`.
-- **Motions:** `h j k l`, `gj gk` on wrapped rows, `w b e W B E ge`, `0 ^ $`,
-  `gg G {n}G`, `f F t T ; ,`, `%`, `{ }`, `H M L`, `ctrl-d ctrl-u ctrl-f
-  ctrl-b`, `n N * #`.
-- **Operators** with any motion or text object: `d c y > < gu gU g~`; doubled
-  (`dd`, `cc`, `yy`); and `D C Y x X s S r J ~ p P`.
-- **Text objects:** `iw aw iW aW is as ip ap`; quotes `i" a" i' a'` and the
-  same for backticks; brackets `i( a( ib i[ a[ i{ a{ i< a<`; and `il al` for a
-  markdown or wiki link.
-- **Insert:** `i a I A o O gi`; `backspace ctrl-w ctrl-u ctrl-t ctrl-d
-  ctrl-o`; `esc` and `ctrl-[` leave. `ctrl-n` and `ctrl-p` complete, as in vim,
-  and `[[` opens completion. Enter continues lists.
-- **Repeat and undo:** `.`, `u`, `ctrl-r`.
-- **Registers:** unnamed, `"a`-`"z`, `"0`, `"_`. `"+` writes the system
-  clipboard through OSC 52; pasting from it is the terminal's paste.
-- **Search:** `/ ?` with Go regular expressions, which differ from vim's
-  (no `\<`, `\v`); `:noh`.
-- **Ex:** `:w :q :wq :x :q! :e!`, `:{n}`, `:s/re/new/[g]` on the line, a visual
-  range, or `%`; `:preview`.
-- **Wiki keys, from vim's own:** `ctrl-]` and `gf` follow the link under the
-  cursor, `ctrl-o` and `ctrl-t` go back, `gx` shows an external link.
-  `ctrl-space` toggles a checklist item, as in vimwiki; some terminals send it
-  as `ctrl-@`, which is accepted too.
 
-Not in the first version: macros (`q`, `@`), marks, line undo (`U`),
-blockwise visual (`ctrl-v`), `:g`, ex ranges other than a visual range and
-`%`, folds, splits and mappings. A vim user will hit these; the key reference lists them as
-missing rather than letting a keypress do something else.
+- **Motions:** `h j k l`, `gj gk` on wrapped rows, `w b e W B E ge`, `0 ^ $`, `gg G {n}G`, `f F t T ; ,`, `%`, `{ }`, `H M L`, `ctrl-d ctrl-u ctrl-f ctrl-b`, `n N * #`.
+
+- **Operators** with any motion or text object: `d c y > < gu gU g~`; doubled (`dd`, `cc`, `yy`); and `D C Y x X s S r J ~ p P`.
+
+- **Text objects:** `iw aw iW aW is as ip ap`; quotes `i" a" i' a'` and the same for backticks; brackets `i( a( ib i[ a[ i{ a{ i< a<`; and `il al` for a markdown or wiki link.
+
+- **Insert:** `i a I A o O gi`; `backspace ctrl-w ctrl-u ctrl-t ctrl-d ctrl-o`; `esc` and `ctrl-[` leave. `ctrl-n` and `ctrl-p` complete, as in vim, and `[[` opens completion. Enter continues lists.
+
+- **Repeat and undo:** `.`, `u`, `ctrl-r`.
+
+- **Registers:** unnamed, `"a`-`"z`, `"0`, `"_`. `"+` writes the system clipboard through OSC 52; pasting from it is the terminal's paste.
+
+- **Search:** `/ ?` with Go regular expressions, which differ from vim's (no `\<`, `\v`); `:noh`.
+
+- **Ex:** `:w :q :wq :x :q! :e!`, `:{n}`, `:s/re/new/[g]` on the line, a visual range, or `%`; `:preview`.
+
+- **Wiki keys, from vim's own:** `ctrl-]` and `gf` follow the link under the cursor, `ctrl-o` and `ctrl-t` go back, `gx` shows an external link. `ctrl-space` toggles a checklist item, as in vimwiki; some terminals send it as `ctrl-@`, which is accepted too.
+
+Not in the first version: macros (`q`, `@`), marks, line undo (`U`), blockwise visual (`ctrl-v`), `:g`, ex ranges other than a visual range and `%`, folds, splits and mappings. A vim user will hit these; the key reference lists them as missing rather than letting a keypress do something else.
 
 ### Concurrent edits
 
 - The buffer remembers the hash it was opened from.
-- The one-second poll notices when the file changes on disk. A clean buffer
-  reloads, keeping the cursor at the nearest line; a dirty buffer shows a
-  banner.
-- Saving a dirty buffer over a changed file is a conflict (section 10). The
-  choices are: see a diff, reload and lose the edits, keep editing, or write
-  the buffer to a new page.
+
+- The one-second poll notices when the file changes on disk. A clean buffer reloads, keeping the cursor at the nearest line; a dirty buffer shows a banner.
+
+- Saving a dirty buffer over a changed file is a conflict (section 10). The choices are: see a diff, reload and lose the edits, keep editing, or write the buffer to a new page.
+
 - There is no automatic three-way merge in the first version.
 
 ### Drafts
 
-The buffer autosaves to `.gnotes/drafts/<page-hash>.md` with its base hash and
-cursor. On reopening a page with a draft, the editor offers to restore it; if
-the page changed since the draft's base, it offers the diff. This is
-gopherwiki's `drafts` table, moved to files so a cache rebuild cannot lose it.
+The buffer autosaves to `.gnotes/drafts/<page-hash>.md` with its base hash and cursor. On reopening a page with a draft, the editor offers to restore it; if the page changed since the draft's base, it offers the diff. This is gopherwiki's `drafts` table, moved to files so a cache rebuild cannot lose it.
 
 ### Building it
 
-A component of our own, on bubbletea and lipgloss, not `bubbles/textarea`
-(phase 0, section 17). It keeps the page as lines, styles and wraps only the
-lines on screen, and records edits for undo. The prototype does not yet draw a
-cursor, map a cursor through wide characters and wrapped rows, select or use
-the clipboard; each of those is bounded by the rows on screen, not by the page.
+A component of our own, on bubbletea and lipgloss, not `bubbles/textarea` (phase 0, section 17). It keeps the page as lines, styles and wraps only the lines on screen, and records edits for undo. The prototype does not yet draw a cursor, map a cursor through wide characters and wrapped rows, select or use the clipboard; each of those is bounded by the rows on screen, not by the page.
 
 ## 12. Terminal interface
 
@@ -465,26 +414,18 @@ wiki                        | Design sketch                     lexer/
 ```
 
 - **Tree** of directories and pages on the left.
-- **Reader** on the right. `tab` moves between links, `enter` follows one,
-  `backspace` goes back through a history stack. A file link opens the file at
-  its line in `$EDITOR`, since source files are not pages.
-- **Link panel** under the page: outgoing, backlinks, broken; `f` on a broken
-  link lists its fix offers.
-- **`/` search as you type**, with snippets. **`ctrl-p`** opens a page by
-  title or path.
-- **`e`** switches to the editor at the current line. **`n`** creates a page,
-  **`r`** renames with the `mv` preview, **`c`** lists broken links across the
-  wiki, **`t`** lists tasks.
 
-Rendering: headings, emphasis, lists, task lists, quotes, code and tables from
-the goldmark tree, styled with lipgloss, by a renderer of our own.
-[glamour](https://github.com/charmbracelet/glamour) was measured and rejected
-(phase 0). The renderer does not use goldmark's typographer or hard-wrap
-options, which gopherwiki enables: typographer changes quotes and dashes, and
-hard wraps render differently from GitHub.
+- **Reader** on the right. `tab` moves between links, `enter` follows one, `backspace` goes back through a history stack. A file link opens the file at its line in `$EDITOR`, since source files are not pages.
 
-The existing interface's input handling, command line, key reference and
-polling are reused; its two-pane notebook model is not.
+- **Link panel** under the page: outgoing, backlinks, broken; `f` on a broken link lists its fix offers.
+
+- **`/` search as you type**, with snippets. **`ctrl-p`** opens a page by title or path.
+
+- **`e`** switches to the editor at the current line. **`n`** creates a page, **`r`** renames with the `mv` preview, **`c`** lists broken links across the wiki, **`t`** lists tasks.
+
+Rendering: headings, emphasis, lists, task lists, quotes, code and tables from the goldmark tree, styled with lipgloss, by a renderer of our own. [glamour](https://github.com/charmbracelet/glamour) was measured and rejected (phase 0). The renderer does not use goldmark's typographer or hard-wrap options, which gopherwiki enables: typographer changes quotes and dashes, and hard wraps render differently from GitHub.
+
+The existing interface's input handling, command line, key reference and polling are reused; its two-pane notebook model is not.
 
 ## 13. Agents and the browser view
 
@@ -504,33 +445,23 @@ The MCP server is how code agents contribute. Tools:
 | `fix_link` | apply one offer |
 | `tasks`, `set_task` | list tasks; change status or tick an item |
 
-- Every write takes a base hash, so an agent cannot overwrite the developer's
-  edit or another agent's. A conflict returns the current content for the
-  agent to retry against.
-- `edit` exists because rewriting a whole page to change a sentence is how an
-  agent loses someone else's paragraph.
-- gnotes does not attribute writes. Authorship is whatever the developer
-  commits; an agent that wants a trail writes it in the page.
+- Every write takes a base hash, so an agent cannot overwrite the developer's edit or another agent's. A conflict returns the current content for the agent to retry against.
 
-gopherwiki's JSON API (`internal/handlers/api_pages.go`) is a reference for
-request and response shapes.
+- `edit` exists because rewriting a whole page to change a sentence is how an agent loses someone else's paragraph.
+
+- gnotes does not attribute writes. Authorship is whatever the developer commits; an agent that wants a trail writes it in the page.
+
+gopherwiki's JSON API (`internal/handlers/api_pages.go`) is a reference for request and response shapes.
 
 ### Browser view
 
-The same tree, reader and link panel, rendered to HTML by goldmark. Editing
-uses a CodeMirror 6 editor, which gopherwiki already builds in `web/editor`
-with the list-continuation rules above. The token and origin protections stay
-as they are. This comes after the terminal interface.
+The same tree, reader and link panel, rendered to HTML by goldmark. Editing uses a CodeMirror 6 editor, which gopherwiki already builds in `web/editor` with the list-continuation rules above. The token and origin protections stay as they are. This comes after the terminal interface.
 
 ## 14. History and migration
 
-**History** is git's. `gnotes log <page>` runs `git log --follow` on the file.
-gopherwiki reads history through go-git; gnotes calls the `git` binary instead,
-since it only reads history and go-git would add a large dependency. Without
-git, a project has no history, and gnotes says so.
+**History** is git's. `gnotes log <page>` runs `git log --follow` on the file. gopherwiki reads history through go-git; gnotes calls the `git` binary instead, since it only reads history and go-git would add a large dependency. Without git, a project has no history, and gnotes says so.
 
-**Migration.** `gnotes migrate` converts the current `gnotes.db`, or a JSONL
-project through the existing importer:
+**Migration.** `gnotes migrate` converts the current `gnotes.db`, or a JSONL project through the existing importer:
 
 | from | to |
 |---|---|
@@ -562,15 +493,11 @@ Non-test lines today:
 | `search` | 170 | query builder kept |
 | `display`, `editor` | 147 | kept; `editor` now opens source files, not pages |
 
-Roughly half of the non-test code is replaced. That is an estimate from this
-table, not a count of a finished change.
+Roughly half of the non-test code is replaced. That is an estimate from this table, not a count of a finished change.
 
 ## 16. What comes from gopherwiki
 
-gopherwiki (`~/projects/gopherwiki`) is a Go wiki server with the same content
-model: markdown pages in a git repository, goldmark, wiki links, front matter and
-FTS5. It is MIT-licensed, with a copyright notice from its Otter Wiki origin; code
-copied from it keeps that notice.
+gopherwiki (`~/projects/gopherwiki`) is a Go wiki server with the same content model: markdown pages in a git repository, goldmark, wiki links, front matter and FTS5. It is MIT-licensed, with a copyright notice from its Otter Wiki origin; code copied from it keeps that notice.
 
 | gopherwiki | use here | change needed |
 |---|---|---|
@@ -587,57 +514,41 @@ copied from it keeps that notice.
 | `storage` (go-git, commit per save) | not used | gnotes never commits |
 | auth, sessions, issues, Quarto, render cache, feeds | not used | |
 
-Keeping the page syntax compatible lets one set of pages be served by
-gopherwiki and edited with gnotes. The one difference is resolution: gopherwiki
-resolves a wiki link by path only, and gnotes also by title (section 5).
+Keeping the page syntax compatible lets one set of pages be served by gopherwiki and edited with gnotes. The one difference is resolution: gopherwiki resolves a wiki link by path only, and gnotes also by title (section 5).
 
 ## 17. Phases
 
-Each phase ends with `make test` and `make lint` passing and its exit criteria
-recorded here.
+Each phase ends with `make test` and `make lint` passing and its exit criteria recorded here.
 
 0. **Spike.** Done; results below.
+
 1. **Cache and read commands.** Done; results below.
-2. **Writes:** the write path with base hashes, `new`, `mv`, `rm`, `tag`,
-   `done`, `promote`, `check --fix`. Done; results below. Exit: rename and fix fixtures covering
-   both link forms, labels, headings, relative paths from other directories,
-   reference-style links, and a conflicting concurrent write.
-3. **Agents.** The MCP tools of section 13, on the phase 2 write path. Early,
-   because agents are writers and need only the command-line core. Done;
-   results below.
-4. **Terminal interface:** tree, reader, link panel, search, quick open.
-   Done; results below.
-5. **Language server** (`gwiki lsp`), then the editor of section 11. Both
-   done; results below.
-6. **Migration** from the notes database. Done; results below. Removing the
-   notes model is deferred: both are kept for now.
+
+2. **Writes:** the write path with base hashes, `new`, `mv`, `rm`, `tag`, `done`, `promote`, `check --fix`. Done; results below. Exit: rename and fix fixtures covering both link forms, labels, headings, relative paths from other directories, reference-style links, and a conflicting concurrent write.
+
+3. **Agents.** The MCP tools of section 13, on the phase 2 write path. Early, because agents are writers and need only the command-line core. Done; results below.
+
+4. **Terminal interface:** tree, reader, link panel, search, quick open. Done; results below.
+
+5. **Language server** (`gwiki lsp`), then the editor of section 11. Both done; results below.
+
+6. **Migration** from the notes database. Done; results below. Removing the notes model is deferred: both are kept for now.
+
 7. **Browser view.** Done; results below.
 
-The work belongs on a branch until phase 4: the two storage models cannot share
-a binary without doubling the front ends.
+The work belongs on a branch until phase 4: the two storage models cannot share a binary without doubling the front ends.
 
 ### Phase 0 results (2026-09-15)
 
 16-thread Linux machine, warm filesystem cache.
 
-**Parser.** `internal/markdown` reads front matter, title, headings (with
-GitHub slugs), links and checklist items, each with its source position. It
-is goldmark with GFM, footnotes, and the wiki-link parser ported from
-gopherwiki with source offsets. Tests cover both link forms, labels, anchors,
-reference-style links, autolinks, links in inline, fenced and indented code,
-front matter offsets, and concurrent use.
+**Parser.** `internal/markdown` reads front matter, title, headings (with GitHub slugs), links and checklist items, each with its source position. It is goldmark with GFM, footnotes, and the wiki-link parser ported from gopherwiki with source offsets. Tests cover both link forms, labels, anchors, reference-style links, autolinks, links in inline, fenced and indented code, front matter offsets, and concurrent use.
 
-- Positions are exact where they exist, and missing, not guessed, where they
-  do not. A markdown destination's offset comes from goldmark returning a
-  slice of the source; the parser checks that the slice aliases the source
-  rather than searching for equal bytes. Two cases have no position: text
-  under tab-expanded indentation, which goldmark copies, and the use site of a
-  reference-style link, whose destination is the shared definition.
-- Destinations are kept as written, with backslash escapes and percent
-  encoding. Resolution in phase 1 decodes them.
+- Positions are exact where they exist, and missing, not guessed, where they do not. A markdown destination's offset comes from goldmark returning a slice of the source; the parser checks that the slice aliases the source rather than searching for equal bytes. Two cases have no position: text under tab-expanded indentation, which goldmark copies, and the use site of a reference-style link, whose destination is the shared definition.
 
-**Parse and index**, one page of 1.3 KB with front matter, four sections, both
-link forms, a file link and checklist items:
+- Destinations are kept as written, with backslash escapes and percent encoding. Resolution in phase 1 decodes them.
+
+**Parse and index**, one page of 1.3 KB with front matter, four sections, both link forms, a file link and checklist items:
 
 | | time |
 |---|---|
@@ -648,11 +559,9 @@ link forms, a file link and checklist items:
 | insert 165,000 rows in one transaction | 477-499 ms |
 | FTS5 query matching all 5,000 pages | 0.86 ms |
 
-A first build is about 0.6 s, most of it inserts. After that, a changed page
-costs one parse and its rows.
+A first build is about 0.6 s, most of it inserts. After that, a changed page costs one parse and its rows.
 
-**Binary size**, stripped, each added to a program already using bubbletea,
-lipgloss and SQLite:
+**Binary size**, stripped, each added to a program already using bubbletea, lipgloss and SQLite:
 
 | added | size |
 |---|---|
@@ -661,14 +570,11 @@ lipgloss and SQLite:
 | `bubbles/textarea` | +578 KB |
 | glamour | +7.86 MB |
 
-glamour also needs a lipgloss prerelease (`v1.1.1-0.20250404203927`) newer
-than the `v1.1.0` gnotes uses.
+glamour also needs a lipgloss prerelease (`v1.1.1-0.20250404203927`) newer than the `v1.1.0` gnotes uses.
 
-**Renderer: our own, on the goldmark tree.** glamour costs more than twice the
-whole browser view, almost all of it chroma for code highlighting.
+**Renderer: our own, on the goldmark tree.** glamour costs more than twice the whole browser view, almost all of it chroma for code highlighting.
 
-**Editor component: our own.** Keystroke latency, an insert and a full redraw
-of a 100x40 view, median of 500:
+**Editor component: our own.** Keystroke latency, an insert and a full redraw of a 100x40 view, median of 500:
 
 | page lines | `bubbles/textarea` | prototype |
 |---|---|---|
@@ -677,32 +583,17 @@ of a 100x40 view, median of 500:
 | 1,000 | 9.9 ms | 35 us |
 | 2,000 | 19.2 ms | 37 us |
 
-`textarea` grows by about 9.6 us per line of page and passes one 60 Hz frame
-near 1,700 lines. It also has no undo, styles only the whole text or the
-cursor line (so it cannot highlight markdown or underline a broken link), and
-stops at 10,000 lines. The prototype undid 500 edits in 2 ms. The prototype
-is incomplete (section 11); its latency is a lower bound, and the design
-keeps each missing feature bounded by the rows on screen.
+`textarea` grows by about 9.6 us per line of page and passes one 60 Hz frame near 1,700 lines. It also has no undo, styles only the whole text or the cursor line (so it cannot highlight markdown or underline a broken link), and stops at 10,000 lines. The prototype undid 500 edits in 2 ms. The prototype is incomplete (section 11); its latency is a lower bound, and the design keeps each missing feature bounded by the rows on screen.
 
 The size and editor programs were throwaway and are not in the tree.
 
 ### Phase 1 results (2026-09-15)
 
-`internal/wiki` holds the cache, refresh, link resolution and queries;
-`gnotes wiki` exposes `init`, `ls`, `show`, `search`, `links`, `backlinks`,
-`check`, `orphans`, `tasks` and `cache --rebuild`, each read command with
-`--json`.
+`internal/wiki` holds the cache, refresh, link resolution and queries; `gnotes wiki` exposes `init`, `ls`, `show`, `search`, `links`, `backlinks`, `check`, `orphans`, `tasks` and `cache --rebuild`, each read command with `--json`.
 
-**Exit criterion 1, met.** A fixture wiki holds one link for each status and
-resolution rule, and `TestEveryLinkStatus` checks every link's kind, status and
-target. Further tests cover deletion, re-creation, renames across refreshes,
-title and heading changes reaching links on other pages, file changes outside
-the wiki, a stale or corrupt cache, concurrent refreshes, and the commands'
-output, exit status and JSON.
+**Exit criterion 1, met.** A fixture wiki holds one link for each status and resolution rule, and `TestEveryLinkStatus` checks every link's kind, status and target. Further tests cover deletion, re-creation, renames across refreshes, title and heading changes reaching links on other pages, file changes outside the wiki, a stale or corrupt cache, concurrent refreshes, and the commands' output, exit status and JSON.
 
-**Exit criterion 2, met for selective queries only.** Median of 50 runs of the
-built binary, process start included, on 5,000 generated pages (1.3 KB each,
-four sections, 16 links and four checklist items per page):
+**Exit criterion 2, met for selective queries only.** Median of 50 runs of the built binary, process start included, on 5,000 generated pages (1.3 KB each, four sections, 16 links and four checklist items per page):
 
 | command | median |
 |---|---|
@@ -717,58 +608,41 @@ four sections, 16 links and four checklist items per page):
 | `tasks -s open`, printing 15,000 rows | 73 ms |
 | `cache --rebuild` | 1.9 s |
 
-Of an unchanged command's time, the scan is 5-8 ms and process start and
-opening the cache about 3 ms. A query matching every page spends about 11 ms
-in BM25 alone, so a broad query cannot meet 15 ms from the command line. The
-terminal interface keeps the cache open and skips the scan per keystroke.
+Of an unchanged command's time, the scan is 5-8 ms and process start and opening the cache about 3 ms. A query matching every page spends about 11 ms in BM25 alone, so a broad query cannot meet 15 ms from the command line. The terminal interface keeps the cache open and skips the scan per keystroke.
 
 Changes from the design, found while building it:
 
-- **The fingerprint** (section 7, step 3) replaced reading the file table on
-  every command, which cost 5 ms.
-- **Resolution per affected link.** Re-resolving every page link after any
-  change cost 143 ms per edited page at 5,000 pages; resolving only links that
-  can name a changed page, through normalised target columns, cost 34 ms.
-  New links are resolved as they are inserted.
-- **Search ranks in three steps**: BM25 picks up to 200 candidates, titles
-  reorder them, and snippets and tags are built for the rows returned.
-  Building them for every match cost 20-30 ms.
-- **Renames are matched across refreshes**, not only within one, because the
-  terminal interface's poll can see a deletion and an addition separately.
-- **A reference resolves by file name** before fragments, so `page-42` is not
-  ambiguous with `page-4200`.
-- **The first build is 1.9 s**, not the spike's 0.6 s: the cache has more
-  indexes and tables than the spike's. Dropping indexes during a large build
-  saved 17% and was not kept, since the index list would have to track the
-  schema by hand.
+- **The fingerprint** (section 7, step 3) replaced reading the file table on every command, which cost 5 ms.
+
+- **Resolution per affected link.** Re-resolving every page link after any change cost 143 ms per edited page at 5,000 pages; resolving only links that can name a changed page, through normalised target columns, cost 34 ms. New links are resolved as they are inserted.
+
+- **Search ranks in three steps**: BM25 picks up to 200 candidates, titles reorder them, and snippets and tags are built for the rows returned. Building them for every match cost 20-30 ms.
+
+- **Renames are matched across refreshes**, not only within one, because the terminal interface's poll can see a deletion and an addition separately.
+
+- **A reference resolves by file name** before fragments, so `page-42` is not ambiguous with `page-4200`.
+
+- **The first build is 1.9 s**, not the spike's 0.6 s: the cache has more indexes and tables than the spike's. Dropping indexes during a large build saved 17% and was not kept, since the index list would have to track the schema by hand.
 
 ### Phase 2 results (2026-09-15)
 
-`gnotes wiki` adds `new`, `edit`, `mv`, `rm`, `tag`, `untag`, `done`, `doing`,
-`reopen`, `promote` and `check --fix[=first]`. Every write, one page or many,
-goes through one batch: all bases are checked under the cache's write lock,
-then each page is written to a synced temporary file and renamed.
+`gnotes wiki` adds `new`, `edit`, `mv`, `rm`, `tag`, `untag`, `done`, `doing`, `reopen`, `promote` and `check --fix[=first]`. Every write, one page or many, goes through one batch: all bases are checked under the cache's write lock, then each page is written to a synced temporary file and renamed.
 
-**Exit criterion, met.** Tests in `internal/wiki` check exact page contents
-after a move for:
+**Exit criterion, met.** Tests in `internal/wiki` check exact page contents after a move for:
 
 - wiki links by title, path, file name and heading, with and without labels;
-- markdown links, repository-rooted links, angle-bracket destinations and
-  reference definitions;
+
+- markdown links, repository-rooted links, angle-bracket destinations and reference definitions;
+
 - the moved page's own relative links to pages, headings, files and lines;
-- a link that becomes ambiguous on a page the move does not edit, and one
-  already broken that is not reported.
 
-Further tests cover a move refused when a linking page changed after
-planning, a conflicting write from a second process, fix offers for each
-broken status, front matter edits, task status, promotion and removal. The CLI
-tests run each command, including `$EDITOR` and interactive `check --fix`.
+- a link that becomes ambiguous on a page the move does not edit, and one already broken that is not reported.
 
-No fixture produced an incoming link without a source position, so the path
-that reports such links as not rewritten has no test.
+Further tests cover a move refused when a linking page changed after planning, a conflicting write from a second process, fix offers for each broken status, front matter edits, task status, promotion and removal. The CLI tests run each command, including `$EDITOR` and interactive `check --fix`.
 
-**Timings.** Median of the built binary, process start included, on the 5,000
-pages of phase 1:
+No fixture produced an incoming link without a source position, so the path that reports such links as not rewritten has no test.
+
+**Timings.** Median of the built binary, process start included, on the 5,000 pages of phase 1:
 
 | command | median |
 |---|---|
@@ -777,55 +651,47 @@ pages of phase 1:
 | `mv --dry-run`, 1,000 incoming links | 65 ms |
 | `mv`, 1,000 incoming links in 500 pages | 662 ms |
 
-A one-page write costs two scans and one re-index, about 38 ms, close to
-phase 1's 34 ms for a read after an edit. A move writes and syncs every page
-it edits, then re-indexes them.
+A one-page write costs two scans and one re-index, about 38 ms, close to phase 1's 34 ms for a read after an edit. A move writes and syncs every page it edits, then re-indexes them.
 
 Changes from the design, found while building it:
 
-- **`new` does not open an editor**, and `edit` opens `$EDITOR`, checked
-  against the page's hash, until the phase 5 editor exists.
-- **A write re-indexes after its renames**, not in the same step. A crash
-  between them leaves the cache stale, and the next command's scan corrects
-  it.
-- **A move reports newly broken links from the links it can change**: those
-  on the pages written and those naming either path or the page's title.
-  Comparing every broken link cost 110 ms on the benchmark wiki, which has
-  15,011 broken links.
-- **A file name matches with spaces read as hyphens**, so `edit parser notes`
-  finds `parser-notes.md` after its title heading is removed.
+- **`new` does not open an editor**, and `edit` opens `$EDITOR`, checked against the page's hash, until the phase 5 editor exists.
+
+- **A write re-indexes after its renames**, not in the same step. A crash between them leaves the cache stale, and the next command's scan corrects it.
+
+- **A move reports newly broken links from the links it can change**: those on the pages written and those naming either path or the page's title. Comparing every broken link cost 110 ms on the benchmark wiki, which has 15,011 broken links.
+
+- **A file name matches with spaces read as hyphens**, so `edit parser notes` finds `parser-notes.md` after its title heading is removed.
+
 - **Not built:** `check --files`, `tasks --due` and `log`.
 
 ### Phase 3 results (2026-09-15)
 
-`gnotes wiki mcp` serves the wiki over MCP on standard input and output, as
-`gnotes-wiki`:
+`gnotes wiki mcp` serves the wiki over MCP on standard input and output, as `gnotes-wiki`:
 
 ```sh
 claude mcp add gnotes-wiki -- gnotes wiki mcp
 ```
 
-It has the eleven tools of section 13, named `gnotes_list`, `gnotes_search`,
-`gnotes_read`, `gnotes_check`, `gnotes_tasks`, `gnotes_create`, `gnotes_edit`,
-`gnotes_write`, `gnotes_rename`, `gnotes_fix_link` and `gnotes_set_task`. The
-protocol code is shared with `gnotes mcp`, which keeps serving the database.
+It has the eleven tools of section 13, named `gnotes_list`, `gnotes_search`, `gnotes_read`, `gnotes_check`, `gnotes_tasks`, `gnotes_create`, `gnotes_edit`, `gnotes_write`, `gnotes_rename`, `gnotes_fix_link` and `gnotes_set_task`. The protocol code is shared with `gnotes mcp`, which keeps serving the database.
 
-**Exit criterion: the tools work on the phase 2 write path.** Tests drive the
-server through its framing and cover:
+**Exit criterion: the tools work on the phase 2 write path.** Tests drive the server through its framing and cover:
 
-- an edit and a whole-page write against a stale hash, after an outside save:
-  refused, nothing written, and the error carries the current hash and source;
+- an edit and a whole-page write against a stale hash, after an outside save: refused, nothing written, and the error carries the current hash and source;
+
 - writes refusing a title or fragment where a path is required;
+
 - a rename with `dry_run`, then for real;
+
 - check offers, a fix refused for a destination not offered, and a fix applied;
+
 - a checklist item refused after a line was inserted above it;
+
 - tool descriptions, schemas and annotations, for both servers.
 
-A command-line test runs `gnotes wiki mcp` and checks that standard output
-holds only frames.
+A command-line test runs `gnotes wiki mcp` and checks that standard output holds only frames.
 
-**Timings.** One server process on the 5,000 pages of phase 1, median; each
-call starts with a refresh:
+**Timings.** One server process on the 5,000 pages of phase 1, median; each call starts with a refresh:
 
 | tool | median |
 |---|---|
@@ -834,64 +700,45 @@ call starts with a refresh:
 | `gnotes_check`, 20 links with offers, of 15,011 broken | 211 ms |
 | `gnotes_check`, one page | 126 ms |
 
-`check` re-examines every file link in the wiki before filtering to a page,
-which is most of its time.
+`check` re-examines every file link in the wiki before filtering to a page, which is most of its time.
 
 Changes from the design, found while building it:
 
-- **`write` replaces the whole source**, front matter included, not the body.
-  An agent changes tags or status with `edit` on the front matter, so no tag
-  tool is needed.
-- **`fix_link` takes the link's page, line and text and the chosen
-  destination**, which must be one of the current offers. An offer number
-  would name a different repair once the list changed.
-- **`set_task` requires the item's text** for a checklist item, since
-  `page:line` names another item after a line is inserted above it.
+- **`write` replaces the whole source**, front matter included, not the body. An agent changes tags or status with `edit` on the front matter, so no tag tool is needed.
+
+- **`fix_link` takes the link's page, line and text and the chosen destination**, which must be one of the current offers. An offer number would name a different repair once the list changed.
+
+- **`set_task` requires the item's text** for a checklist item, since `page:line` names another item after a line is inserted above it.
+
 - **Writes take exact paths**; reads also take titles and fragments.
-- **Edits at cached byte offsets check the page against the cache.** Ticking
-  an item or promoting it used an offset from the cache on a page read later,
-  so a save in between could put the box character in the wrong place. Phase
-  2 had this fault; moves already checked.
-- **Offers for many links share one page index**, and the similar-name search
-  stops an edit distance once it passes the limit. Twenty offers took 695 ms
-  before, loading the index for each link.
-- **No `delete` tool**, as in section 13. gnotes has no undo, so deletion is
-  left to the developer.
+
+- **Edits at cached byte offsets check the page against the cache.** Ticking an item or promoting it used an offset from the cache on a page read later, so a save in between could put the box character in the wrong place. Phase 2 had this fault; moves already checked.
+
+- **Offers for many links share one page index**, and the similar-name search stops an edit distance once it passes the limit. Twenty offers took 695 ms before, loading the index for each link.
+
+- **No `delete` tool**, as in section 13. gnotes has no undo, so deletion is left to the developer.
 
 ### Phase 4 results (2026-09-15)
 
-`gnotes wiki ui` opens the interface of section 12. It starts on `index`, or
-the first page, and has:
+`gnotes wiki ui` opens the interface of section 12. It starts on `index`, or the first page, and has:
 
 - a tree of directories and pages, with folding;
-- a reader drawn by `internal/render`, with `tab` and `shift-tab` between links,
-  `enter` to follow and `backspace` to go back;
-- a link panel with counts, the selected link's target and status, and
-  backlinks (`b`);
-- search as you type (`/`), quick open by title or path (`ctrl-p`), broken
-  links across the wiki (`c`) and tasks (`t`, `space` toggles);
-- repairs for a broken link (`f`), a new page (`n`), and a move with the
-  number of links it rewrites shown before it runs (`r`);
-- a one-second poll that reloads pages changed outside the interface and
-  follows a rename of the open page.
 
-**Renderer.** `internal/render` walks goldmark's tree: headings, emphasis,
-code, lists, checklists, quotes, fenced code, tables, rules and footnotes. It
-wraps at spaces to the width, records the output line of every link and
-heading, and maps each output line to its source line. Control characters in
-page text are replaced. A 5 KB page renders in 1.75 ms, so a selection
-change renders the page again rather than patching lines.
+- a reader drawn by `internal/render`, with `tab` and `shift-tab` between links, `enter` to follow and `backspace` to go back;
 
-**Exit criterion: the interface works on the wiki and fits the terminal.**
-Tests drive the model with key messages over a real wiki and check following
-page, heading, broken and file links; back; backlinks; search; quick open;
-repairing a link; toggling a task; creating and moving a page; the poll; an
-edit that conflicts with an outside save; an empty wiki; and every screen at
-sizes from 100x30 down to 1x1, with no line wider than the terminal. A run
-in a pseudo-terminal on the 5,000-page wiki starts, draws and quits.
+- a link panel with counts, the selected link's target and status, and backlinks (`b`);
 
-**Timings.** One process on the 5,000 pages of phase 1, including drawing the
-frame, median:
+- search as you type (`/`), quick open by title or path (`ctrl-p`), broken links across the wiki (`c`) and tasks (`t`, `space` toggles);
+
+- repairs for a broken link (`f`), a new page (`n`), and a move with the number of links it rewrites shown before it runs (`r`);
+
+- a one-second poll that reloads pages changed outside the interface and follows a rename of the open page.
+
+**Renderer.** `internal/render` walks goldmark's tree: headings, emphasis, code, lists, checklists, quotes, fenced code, tables, rules and footnotes. It wraps at spaces to the width, records the output line of every link and heading, and maps each output line to its source line. Control characters in page text are replaced. A 5 KB page renders in 1.75 ms, so a selection change renders the page again rather than patching lines.
+
+**Exit criterion: the interface works on the wiki and fits the terminal.** Tests drive the model with key messages over a real wiki and check following page, heading, broken and file links; back; backlinks; search; quick open; repairing a link; toggling a task; creating and moving a page; the poll; an edit that conflicts with an outside save; an empty wiki; and every screen at sizes from 100x30 down to 1x1, with no line wider than the terminal. A run in a pseudo-terminal on the 5,000-page wiki starts, draws and quits.
+
+**Timings.** One process on the 5,000 pages of phase 1, including drawing the frame, median:
 
 | action | median |
 |---|---|
@@ -907,26 +754,23 @@ frame, median:
 
 Changes from the design, found while building it:
 
-- **It lives in `internal/tui`** beside the notes interface, reusing the input
-  field, styles and poll. Both interfaces are in one binary until phase 6
-  removes the notes one.
-- **No `:` command line.** Every action has a key; a command line returns if
-  an action needs arguments a prompt cannot take.
-- **`e` opens `$EDITOR` on the whole page**, not the gnotes editor at the
-  current line, until phase 5. The write is checked against the hash read
-  before editing; on a conflict the edited text is kept in a temporary file
-  and its path shown.
-- **A file link opens `$EDITOR` with `+N`** for a line anchor. Editors that
-  do not take `+N`, such as VS Code, open the file at its start or fail.
+- **It lives in `internal/tui`** beside the notes interface, reusing the input field, styles and poll. Both interfaces are in one binary until phase 6 removes the notes one.
+
+- **No `:` command line.** Every action has a key; a command line returns if an action needs arguments a prompt cannot take.
+
+- **`e` opens `$EDITOR` on the whole page**, not the gnotes editor at the current line, until phase 5. The write is checked against the hash read before editing; on a conflict the edited text is kept in a temporary file and its path shown.
+
+- **A file link opens `$EDITOR` with `+N`** for a line anchor. Editors that do not take `+N`, such as VS Code, open the file at its start or fail.
+
 - **External links are shown, not opened.**
-- **`space` pages down in the reader.** Toggling a checklist item is in the
-  task list.
+
+- **`space` pages down in the reader.** Toggling a checklist item is in the task list.
+
 - **The tree sorts by path**, so `page-100` comes before `page-2`.
 
 ### Phase 5 results: language server (2026-09-16)
 
-`gnotes wiki lsp` speaks LSP 3.17 on standard input and output. It opens the
-wiki at the workspace root the editor sends, or the directory it runs in.
+`gnotes wiki lsp` speaks LSP 3.17 on standard input and output. It opens the wiki at the workspace root the editor sends, or the directory it runs in.
 
 | request | does |
 |---|---|
@@ -940,26 +784,13 @@ wiki at the workspace root the editor sends, or the directory it runs in.
 | `workspace/willRenameFiles` | the link edits when the editor renames a page itself |
 | code actions | each repair `check --fix` offers, and creating a missing page |
 
-It writes nothing. Edits go to the editor, which applies them to its buffers;
-the server sees the result on save or within a second.
+It writes nothing. Edits go to the editor, which applies them to its buffers; the server sees the result on save or within a second.
 
-**Unsaved buffers.** `wiki.Snapshot` holds the page index, every page's
-headings included, and resolves a buffer's links as refresh would, with the
-buffer's own headings. A test checks that it gives the same links as the
-cache for every page of the phase 1 fixture. The snapshot is loaded again
-only when a refresh finds a change.
+**Unsaved buffers.** `wiki.Snapshot` holds the page index, every page's headings included, and resolves a buffer's links as refresh would, with the buffer's own headings. A test checks that it gives the same links as the cache for every page of the phase 1 fixture. The snapshot is loaded again only when a refresh finds a change.
 
-**Exit criterion: an editor gets completion, diagnostics, following and
-rename on the wiki.** Tests drive the server through its framing as an editor
-would, with UTF-8 and UTF-16 positions, and cover each request above; a rename
-applied to the files leaves no new broken link; renames are refused over
-unsaved changes to a page they edit, and in an editor that cannot rename
-files. Helix 25.07 ran against the built binary: it initialized, received the
-diagnostic for a broken link at the right range, followed a link to its page,
-and shut the server down.
+**Exit criterion: an editor gets completion, diagnostics, following and rename on the wiki.** Tests drive the server through its framing as an editor would, with UTF-8 and UTF-16 positions, and cover each request above; a rename applied to the files leaves no new broken link; renames are refused over unsaved changes to a page they edit, and in an editor that cannot rename files. Helix 25.07 ran against the built binary: it initialized, received the diagnostic for a broken link at the right range, followed a link to its page, and shut the server down.
 
-**Timings.** One server on the 5,000 pages of phase 1, median, framing
-included:
+**Timings.** One server on the 5,000 pages of phase 1, median, framing included:
 
 | request | median |
 |---|---|
@@ -972,75 +803,39 @@ included:
 
 Changes from the design, found while building it:
 
-- **A rename does not write.** `gnotes wiki mv` writes each page atomically
-  against its hash; through LSP the editor applies the edits, and the pages
-  it edits stay unsaved until the user saves them.
-- **A rename is refused when a page it edits has unsaved changes**, since the
-  edits are positioned in the saved files.
-- **Only pages under `.gnotes/wiki` are served.** A markdown file elsewhere in
-  the repository, such as `README.md`, gets no diagnostics or completion.
-- **Whole-document sync.** The server asks for the full text on each change;
-  pages are small, and a page of 5 KB checks in under a millisecond.
+- **A rename does not write.** `gnotes wiki mv` writes each page atomically against its hash; through LSP the editor applies the edits, and the pages it edits stay unsaved until the user saves them.
+
+- **A rename is refused when a page it edits has unsaved changes**, since the edits are positioned in the saved files.
+
+- **Only pages under `.gnotes/wiki` are served.** A markdown file elsewhere in the repository, such as `README.md`, gets no diagnostics or completion.
+
+- **Whole-document sync.** The server asks for the full text on each change; pages are small, and a page of 5 KB checks in under a millisecond.
 
 ### Cutover and overview (2026-09-16)
 
 Done before the editor, so the editor is built into the final interface once.
 
-- **Rename.** Binary `gwiki`, module `github.com/shakfu/gwiki`, directory
-  `.gwiki/`, variables `GWIKI_*`. Finding only `.gnotes/`, `gwiki` names it
-  and asks for the directory to be renamed.
-- **Command layout.** The wiki commands are top-level and a bare `gwiki`
-  opens the wiki interface. The notes database stays, as `.gwiki/notes.db`,
-  with its commands, interface, browser view and MCP server under
-  `gwiki notes`, including `-g`. Both have `ls`, `edit`, `done` and others, so
-  one had to move under a group. The two share `.gwiki/.gitignore`, and each
-  adds its lines when missing.
-- **Overview.** The wiki interface opens on an overview of recent changes,
-  tasks, health and structure (README, "The interface"). Recent changes take
-  the last commit to each page from one `git log` over the pages directory,
-  bounded to 500 commits, and uncommitted pages from `git status`; outside a
-  repository they use file times alone.
+- **Rename.** Binary `gwiki`, module `github.com/shakfu/gwiki`, directory `.gwiki/`, variables `GWIKI_*`. Finding only `.gnotes/`, `gwiki` names it and asks for the directory to be renamed.
 
-Loading the overview on the 5,000 pages of phase 1 takes 165 ms, most of it
-counting orphans, dead ends and hubs over 80,000 link rows and listing 15,000
-open tasks; it loads when the overview opens and when pages change. Drawing
-it takes 0.14 ms.
+- **Command layout.** The wiki commands are top-level and a bare `gwiki` opens the wiki interface. The notes database stays, as `.gwiki/notes.db`, with its commands, interface, browser view and MCP server under `gwiki notes`, including `-g`. Both have `ls`, `edit`, `done` and others, so one had to move under a group. The two share `.gwiki/.gitignore`, and each adds its lines when missing.
 
-Not done: importing notes into pages, and removing the notes model. Both wait
-for a decision after the editor.
+- **Overview.** The wiki interface opens on an overview of recent changes, tasks, health and structure (README, "The interface"). Recent changes take the last commit to each page from one `git log` over the pages directory, bounded to 500 commits, and uncommitted pages from `git status`; outside a repository they use file times alone.
+
+Loading the overview on the 5,000 pages of phase 1 takes 165 ms, most of it counting orphans, dead ends and hubs over 80,000 link rows and listing 15,000 open tasks; it loads when the overview opens and when pages change. Drawing it takes 0.14 ms.
+
+Not done: importing notes into pages, and removing the notes model. Both wait for a decision after the editor.
 
 ### Phase 5 results: editor (2026-09-16)
 
-`internal/vim` is a modal editor engine over a buffer of lines. It draws
-nothing and touches no files: a host feeds it keys, reads the buffer and the
-cursor, and supplies hooks for saving, quitting, following a link, completing
-text and reporting changes. `e` in the wiki interface opens the page in it;
-`E` still hands the page to `$EDITOR`.
+`internal/vim` is a modal editor engine over a buffer of lines. It draws nothing and touches no files: a host feeds it keys, reads the buffer and the cursor, and supplies hooks for saving, quitting, following a link, completing text and reporting changes. `e` in the wiki interface opens the page in it; `E` still hands the page to `$EDITOR`.
 
-**What it has**, of section 11's list: modes, counts, registers, the operators
-with motions and text objects, `.`, undo and redo, search with Go regular
-expressions, and the ex commands. `il` and `al` are the wiki addition: the
-destination of the link at the cursor, or the whole link.
+**What it has**, of section 11's list: modes, counts, registers, the operators with motions and text objects, `.`, undo and redo, search with Go regular expressions, and the ex commands. `il` and `al` are the wiki addition: the destination of the link at the cursor, or the whole link.
 
-**What it does not have**, as planned: macros, marks, blockwise visual, `:g`,
-folds, splits and mappings. The key reference lists them as missing.
+**What it does not have**, as planned: macros, marks, blockwise visual, `:g`, folds, splits and mappings. The key reference lists them as missing.
 
-**Host side.** `:w` writes through the phase 2 path, against the hash the
-buffer was read from; a page saved elsewhere refuses the write and names `:w!`
-and `:e!`. The one-second poll reloads a clean buffer whose page changed on
-disk and warns about a modified one. The buffer autosaves to `.gwiki/drafts/`,
-written by that poll rather than by each keystroke, and a draft is offered
-when the page is opened again. `ctrl-n` completes pages after `[[`, headings
-after `#` and paths after `](`; `ctrl-]` follows the link under the cursor;
-`:preview` draws the page as the reader does.
+**Host side.** `:w` writes through the phase 2 path, against the hash the buffer was read from; a page saved elsewhere refuses the write and names `:w!` and `:e!`. The one-second poll reloads a clean buffer whose page changed on disk and warns about a modified one. The buffer autosaves to `.gwiki/drafts/`, written by that poll rather than by each keystroke, and a draft is offered when the page is opened again. `ctrl-n` completes pages after `[[`, headings after `#` and paths after `](`; `ctrl-]` follows the link under the cursor; `:preview` draws the page as the reader does.
 
-**Exit criterion: the editor edits pages, saves them and survives conflicts.**
-About 90 key-sequence tests cover the engine, each a buffer, keys, and the
-text and cursor they produce. Interface tests cover opening, typing, list
-continuation, `:w`, `:q` with unsaved changes, a page changed under the
-buffer, `:w!`, drafts, completion, following a link, broken-link marking,
-`:preview`, and a paste arriving as one key message. A run in a pseudo-
-terminal typed a line into a page, wrote it and left.
+**Exit criterion: the editor edits pages, saves them and survives conflicts.** About 90 key-sequence tests cover the engine, each a buffer, keys, and the text and cursor they produce. Interface tests cover opening, typing, list continuation, `:w`, `:q` with unsaved changes, a page changed under the buffer, `:w!`, drafts, completion, following a link, broken-link marking, `:preview`, and a paste arriving as one key message. A run in a pseudo- terminal typed a line into a page, wrote it and left.
 
 **Timings.** A 3,000-line page, 45 rows drawn, including the frame:
 
@@ -1052,114 +847,70 @@ terminal typed a line into a page, wrote it and left.
 | marking broken links, 1,000 links | 7.2 ms |
 | `:w` | 27 ms |
 
-Drawing a character at a time cost 1.2 ms a keystroke; runs of one style are
-now drawn together.
+Drawing a character at a time cost 1.2 ms a keystroke; runs of one style are now drawn together.
 
 Changes from the design, found while building it:
 
-- **Tab inserts two spaces.** goldmark loses the source position of text under
-  a tab, which link rewriting needs.
-- **A search is a Go regular expression**, so `\<` and `\v` are not
-  available, and `:s` takes `\1` and `&` in the replacement.
-- **Following a link needs a saved buffer**, since the target is resolved from
-  the page on disk.
+- **Tab inserts two spaces.** goldmark loses the source position of text under a tab, which link rewriting needs.
+
+- **A search is a Go regular expression**, so `\<` and `\v` are not available, and `:s` takes `\1` and `&` in the replacement.
+
+- **Following a link needs a saved buffer**, since the target is resolved from the page on disk.
+
 - **`:check`** reports the broken links in the buffer, unsaved.
 
 ### Phase 7 results: browser view (2026-09-16)
 
-`gwiki serve` opens the wiki in a browser. `internal/webwiki` is a front end
-over the same wiki package as the other three, with the token, Host and Origin
-protections of the notes server.
+`gwiki serve` opens the wiki in a browser. `internal/webwiki` is a front end over the same wiki package as the other three, with the token, Host and Origin protections of the notes server.
 
-- **Views:** the overview of section 12, the page tree, a page with its links
-  and backlinks, search, broken links, tasks, pages by tag or directory, and a
-  source file at the line a link names.
-- **Editing:** a textarea against the hash the page was read at. A conflict
-  returns the current text with a 409 and writes nothing. Enter continues
-  markdown lists, by the same rules as the terminal editor.
-- **Live:** server-sent events carry a version; a change made anywhere reloads
-  the view, unless the editor is open.
-- **Markdown to HTML:** `markdown.HTML` renders through goldmark with the
-  wiki-link parser, resolving each link to an application address and marking
-  a broken one. Raw HTML in a page is escaped, not passed through: pages come
-  from a repository and from agents.
+- **Views:** the overview of section 12, the page tree, a page with its links and backlinks, search, broken links, tasks, pages by tag or directory, and a source file at the line a link names.
 
-**Exit criterion: the browser reads and writes the wiki safely.** Tests drive
-the server over HTTP: a request without the token, with a wrong token, from
-another origin, and with a rebinding Host is refused; the overview, pages,
-search, check and file views answer; a save writes, a stale save conflicts and
-changes nothing; a file outside the repository is refused; raw HTML in a page
-does not reach the browser; the event stream reports a page written outside.
-Two tests cover the page script without a browser: every `/api/` path it
-fetches must exist on the server, and its list continuation runs under node
-against the same cases as the editor's.
+- **Editing:** a textarea against the hash the page was read at. A conflict returns the current text with a 409 and writes nothing. Enter continues markdown lists, by the same rules as the terminal editor.
+
+- **Live:** server-sent events carry a version; a change made anywhere reloads the view, unless the editor is open.
+
+- **Markdown to HTML:** `markdown.HTML` renders through goldmark with the wiki-link parser, resolving each link to an application address and marking a broken one. Raw HTML in a page is escaped, not passed through: pages come from a repository and from agents.
+
+**Exit criterion: the browser reads and writes the wiki safely.** Tests drive the server over HTTP: a request without the token, with a wrong token, from another origin, and with a rebinding Host is refused; the overview, pages, search, check and file views answer; a save writes, a stale save conflicts and changes nothing; a file outside the repository is refused; raw HTML in a page does not reach the browser; the event stream reports a page written outside. Two tests cover the page script without a browser: every `/api/` path it fetches must exist on the server, and its list continuation runs under node against the same cases as the editor's.
 
 Changes from the design, found while building it:
 
-- **No CodeMirror.** gopherwiki's editor needs a build step; the page is a
-  textarea with the list rules ported, and the terminal editor is where the
-  editing effort went.
-- **A file link opens the file** in the browser, at its line range, rather
-  than doing nothing.
-- **The page keeps no model**, as the notes view does not: every view is a
-  fetch and a redraw.
+- **No CodeMirror.** gopherwiki's editor needs a build step; the page is a textarea with the list rules ported, and the terminal editor is where the editing effort went.
+
+- **A file link opens the file** in the browser, at its line range, rather than doing nothing.
+
+- **The page keeps no model**, as the notes view does not: every view is a fetch and a redraw.
 
 ### Phase 6 results: migration (2026-09-16)
 
-`gwiki migrate` copies the notes database into pages, by the table of section
-14: a notebook becomes a directory, a note a page, a task a task page with its
-status, priority, due date and assignees, tags go to the front matter, and a
-reference becomes a `[[wiki]]` link by title under a "Links" heading.
+`gwiki migrate` copies the notes database into pages, by the table of section 14: a notebook becomes a directory, a note a page, a task a task page with its status, priority, due date and assignees, tags go to the front matter, and a reference becomes a `[[wiki]]` link by title under a "Links" heading.
 
-Nothing is removed. The database is left as it is, and `gwiki notes` still
-reads it. A page already where an entry would go is left alone and counted, so
-the command can be run again after writing more notes. `--dry-run` lists what
-it would write, `--in` puts the notebooks under a directory, and `--global`
-migrates the global notes.
+Nothing is removed. The database is left as it is, and `gwiki notes` still reads it. A page already where an entry would go is left alone and counted, so the command can be run again after writing more notes. `--dry-run` lists what it would write, `--in` puts the notebooks under a directory, and `--global` migrates the global notes.
 
-A JSONL project needs no separate path: opening it imports it into the
-database first, as it has since the storage change.
+A JSONL project needs no separate path: opening it imports it into the database first, as it has since the storage change.
 
-**Deleted entries** are skipped, or written with `--include-deleted` under
-`.gwiki/wiki/.deleted/`. The wiki does not index a hidden directory, so they
-are kept in the repository without appearing in the wiki, which also means
-they are written as files rather than through the write path.
+**Deleted entries** are skipped, or written with `--include-deleted` under `.gwiki/wiki/.deleted/`. The wiki does not index a hidden directory, so they are kept in the repository without appearing in the wiki, which also means they are written as files rather than through the write path.
 
-**Exit criterion: a project converts and reads back.** Tests migrate a project
-with a notebook, a note, a task with every field, a reference and a deleted
-entry; check the pages' exact text; confirm the reference resolves; confirm
-the database still lists its entries; and confirm a second run writes nothing.
+**Exit criterion: a project converts and reads back.** Tests migrate a project with a notebook, a note, a task with every field, a reference and a deleted entry; check the pages' exact text; confirm the reference resolves; confirm the database still lists its entries; and confirm a second run writes nothing.
 
-**Timings.** A project of 5,020 entries: 0.07 s for `--dry-run`, 3.9 s to
-write, which is one commit and one index of 5,020 pages. `gwiki ls` then lists
-5,020 pages with no broken links.
+**Timings.** A project of 5,020 entries: 0.07 s for `--dry-run`, 3.9 s to write, which is one commit and one index of 5,020 pages. `gwiki ls` then lists 5,020 pages with no broken links.
 
 ### Notes removed (2026-09-17)
 
-The notes model is deleted: `gwiki notes`, global notes, `gwiki migrate`, and
-the `event`, `state`, `store`, `session`, `rank`, `ulid` and `web` packages.
-Non-test Go fell from 26,323 to 17,093 lines; the binary from 21.1 MB to
-20.3 MB, since the cache keeps SQLite. Migration stays available in 0.1.1.
+The notes model is deleted: `gwiki notes`, global notes, `gwiki migrate`, and the `event`, `state`, `store`, `session`, `rank`, `ulid` and `web` packages. Non-test Go fell from 26,323 to 17,093 lines; the binary from 21.1 MB to 20.3 MB, since the cache keeps SQLite. Migration stays available in 0.1.1.
 
 ### Export (2026-09-17)
 
-`[[wiki]]` links show as text on GitHub, against the goal in section 1; in
-this wiki 67 of 91 links were wiki links. `gwiki export <dir>` writes a copy
-with each resolving wiki link as a relative markdown link, keeping its text,
-and relative code links re-pointed from `dir`. Export over rewriting the pages
-in place: pages keep wiki links, which survive moving the linking page, and a
-markdown host renders the copy. The export directory holds a manifest,
-`.gwiki-export`, so a later export removes only the files it wrote.
+`[[wiki]]` links show as text on GitHub, against the goal in section 1; in this wiki 67 of 91 links were wiki links. `gwiki export <dir>` writes a copy with each resolving wiki link as a relative markdown link, keeping its text, and relative code links re-pointed from `dir`. Export over rewriting the pages in place: pages keep wiki links, which survive moving the linking page, and a markdown host renders the copy. The export directory holds a manifest, `.gwiki-export`, so a later export removes only the files it wrote.
 
 ## 18. Open questions
 
-1. **Global notes.** Decided: dropped with the notes model (section 17,
-   "Notes removed"). There is no global wiki.
-2. **Checklist items in other files.** Should `tasks` also collect `- [ ]`
-   items from markdown outside `.gnotes/wiki`, such as `TODO.md`?
-3. **Assignees without accounts.** With the developer and agents as writers,
-   is `assignees` needed, and if so, what names it?
+1. **Global notes.** Decided: dropped with the notes model (section 17, "Notes removed"). There is no global wiki.
+
+2. **Checklist items in other files.** Should `tasks` also collect `- [ ]` items from markdown outside `.gnotes/wiki`, such as `TODO.md`?
+
+3. **Assignees without accounts.** With the developer and agents as writers, is `assignees` needed, and if so, what names it?
+
 4. **Editor keys.** Decided: modal, vim-style (section 11).
-5. **A language server.** Decided: built first, in the same executable, as
-   `gnotes wiki lsp` (phase 5). Whether the editor of section 11 is still
-   needed is open.
+
+5. **A language server.** Decided: built first, in the same executable, as `gnotes wiki lsp` (phase 5). Whether the editor of section 11 is still needed is open.

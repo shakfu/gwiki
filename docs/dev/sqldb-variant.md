@@ -6,12 +6,9 @@ Sketch and design space, not a plan. Nothing here is committed to.
 
 ## 1. The question behind the question
 
-"gnotes, but on SQLite or DuckDB" is under-specified in one important way, and
-the missing piece decides everything else: **what happens to sync?**
+"gnotes, but on SQLite or DuckDB" is under-specified in one important way, and the missing piece decides everything else: **what happens to sync?**
 
-The current architecture is not really "a notes tool that happens to store
-JSONL". It is a set of five decisions that exist solely so that `git merge` can
-never produce a conflict in the notes:
+The current architecture is not really "a notes tool that happens to store JSONL". It is a set of five decisions that exist solely so that `git merge` can never produce a conflict in the notes:
 
 | decision | exists because |
 |---|---|
@@ -21,41 +18,23 @@ never produce a conflict in the notes:
 | fractional 96-bit ranks | reordering must be a local edit, not a renumbering of siblings |
 | search index rebuilt at startup | a persisted index would be a sixth thing to merge |
 
-Put a binary file at the centre and the merge property evaporates. Git stores a
-whole new copy per sync and cannot merge two of them; one side's writes are
-silently lost. That was the finding when SQLite-as-truth was evaluated on
-2026-08-17, and it has not changed.
+Put a binary file at the centre and the merge property evaporates. Git stores a whole new copy per sync and cannot merge two of them; one side's writes are silently lost. That was the finding when SQLite-as-truth was evaluated on 2026-08-17, and it has not changed.
 
-So a genuine variant has to pick a different answer for sync, and there are only
-three honest ones:
+So a genuine variant has to pick a different answer for sync, and there are only three honest ones:
 
-- **A.** Give it up. Single user, single machine. The DB is the truth, the tool
-  gets much smaller, and you are building a different (perfectly reasonable)
-  product.
-- **B.** Keep the event log as the unit of exchange, but make its *transport*
-  something other than "the log file is the storage format". Events are
-  immutable and self-identifying, so sync is set union — the easiest
-  distributed problem there is. Git can still be the transport if the DB writes
-  a text mirror.
-- **C.** Delegate to a replication layer (Litestream, rqlite, Turso, cr-sqlite).
-  This buys sync at the cost of a server or a large extension, which contradicts
-  "self-contained single executable".
+- **A.** Give it up. Single user, single machine. The DB is the truth, the tool gets much smaller, and you are building a different (perfectly reasonable) product.
 
-**Alternative framing worth considering.** The interesting axis may not be
-storage at all. It is whether the tool is *collaboration-first* (today's gnotes:
-offline, multi-author, git-native, history is the point) or *query-first* (a
-local knowledge base you interrogate: full-text with real ranking, temporal
-questions, aggregates, joins against other project data). SQLite is a good
-answer to the second question and a bad answer to the first. If the actual
-appetite is query-first, the variant is worth building and should not pretend to
-be a drop-in.
+- **B.** Keep the event log as the unit of exchange, but make its *transport* something other than "the log file is the storage format". Events are immutable and self-identifying, so sync is set union — the easiest distributed problem there is. Git can still be the transport if the DB writes a text mirror.
+
+- **C.** Delegate to a replication layer (Litestream, rqlite, Turso, cr-sqlite). This buys sync at the cost of a server or a large extension, which contradicts "self-contained single executable".
+
+**Alternative framing worth considering.** The interesting axis may not be storage at all. It is whether the tool is *collaboration-first* (today's gnotes: offline, multi-author, git-native, history is the point) or *query-first* (a local knowledge base you interrogate: full-text with real ranking, temporal questions, aggregates, joins against other project data). SQLite is a good answer to the second question and a bad answer to the first. If the actual appetite is query-first, the variant is worth building and should not pretend to be a drop-in.
 
 ## 2. SQLite or DuckDB
 
 **SQLite, decisively.** Measured locally, not recalled:
 
-DuckDB 1.5.5 takes an exclusive lock on the database file. A second process is
-refused even in read-only mode while a read-write connection is open:
+DuckDB 1.5.5 takes an exclusive lock on the database file. A second process is refused even in read-only mode while a read-write connection is open:
 
 ```text
 $ duckdb d.duckdb            # held open in another terminal
@@ -64,54 +43,36 @@ IO Error: Could not set lock on file "d.duckdb":
 Conflicting lock is held in .../duckdb (PID 42306) by user sa.
 ```
 
-gnotes runs `gnotes serve` as a long-lived process while you use the CLI, the
-TUI and an MCP server against the same project. DuckDB makes that arrangement
-impossible without a broker process, which is a larger change than the storage
-swap itself. SQLite in WAL mode gives multi-process readers plus one writer,
-which is exactly the shape needed.
+gnotes runs `gnotes serve` as a long-lived process while you use the CLI, the TUI and an MCP server against the same project. DuckDB makes that arrangement impossible without a broker process, which is a larger change than the storage swap itself. SQLite in WAL mode gives multi-process readers plus one writer, which is exactly the shape needed.
 
-Secondary reasons: DuckDB's static library is tens of megabytes against
-SQLite's ~1 MB amalgamation; DuckDB's file format has a shorter stability track
-record than SQLite's (which carries a stated commitment to 2050); DuckDB's FTS
-is an extension rather than a compiled-in feature; and the workload is small-row
-OLTP, which is the case a column store is worst at.
+Secondary reasons: DuckDB's static library is tens of megabytes against SQLite's ~1 MB amalgamation; DuckDB's file format has a shorter stability track record than SQLite's (which carries a stated commitment to 2050); DuckDB's FTS is an extension rather than a compiled-in feature; and the workload is small-row OLTP, which is the case a column store is worst at.
 
-**But DuckDB is still useful — as a reader, not a store.** It attaches SQLite
-files directly, so all the analytical upside is available without adopting it as
-the format. Verified:
+**But DuckDB is still useful — as a reader, not a store.** It attaches SQLite files directly, so all the analytical upside is available without adopting it as the format. Verified:
 
 ```text
 $ duckdb -c "ATTACH 'notes.db' AS s (TYPE sqlite); SELECT count(*) FROM s.a;"
 4
 ```
 
-That is the right split: SQLite owns writes; DuckDB, `datasette`, or plain
-`sqlite3` are ad-hoc readers. It also means the "I want SQL over my notes" wish
-is satisfiable by exporting to SQLite from today's gnotes without any variant at
-all.
+That is the right split: SQLite owns writes; DuckDB, `datasette`, or plain `sqlite3` are ad-hoc readers. It also means the "I want SQL over my notes" wish is satisfiable by exporting to SQLite from today's gnotes without any variant at all.
 
 ## 3. Three variants, in increasing radicalism
 
 ### V0 — SQLite as a derived cache (not really a variant)
 
-JSONL stays the truth. `.gnotes/cache.db` is gitignored, holds the materialized
-tree plus an FTS5 index, and is keyed by the log fingerprint. Startup replays
-only the appended tail.
+JSONL stays the truth. `.gnotes/cache.db` is gitignored, holds the materialized tree plus an FTS5 index, and is keyed by the log fingerprint. Startup replays only the appended tail.
 
-- Buys: FTS5 search with BM25 ranking, SQL queries, sub-millisecond startup at
-  any log size, no full replay.
+- Buys: FTS5 search with BM25 ranking, SQL queries, sub-millisecond startup at any log size, no full replay.
+
 - Costs: a dependency, a second code path, invalidation logic.
+
 - Loses: nothing. Every current property is untouched.
 
-This is the snapshot-cache idea with a query engine bolted on. It is the
-cheapest route to ~80% of the benefit and should be the baseline that the real
-variants are measured against. If a variant cannot beat V0 on something
-specific, it is not worth building.
+This is the snapshot-cache idea with a query engine bolted on. It is the cheapest route to ~80% of the benefit and should be the baseline that the real variants are measured against. If a variant cannot beat V0 on something specific, it is not worth building.
 
 ### V1 — Event log *in* SQLite, with a text mirror for git (recommended variant)
 
-The DB is the working store; the JSONL files become an export/import format
-produced at `sync` time.
+The DB is the working store; the JSONL files become an export/import format produced at `sync` time.
 
 ```text
 write path:  session -> INSERT INTO events -> fold into nodes (same txn)
@@ -121,50 +82,27 @@ sync in:     git pull -> read appended lines -> INSERT OR IGNORE INTO events
              -> reorder -> fold the new suffix into nodes
 ```
 
-The important property: because events are immutable and keyed by ULID,
-`INSERT OR IGNORE` *is* the merge. There is no conflict resolution code, no
-three-way diff, no CRDT library. The set union is the merge, and the canonical
-`ref`-tree ordering turns the set back into a sequence. Git is reduced to a
-transport for append-only text, which is the one thing it is unambiguously good
-at.
+The important property: because events are immutable and keyed by ULID, `INSERT OR IGNORE` *is* the merge. There is no conflict resolution code, no three-way diff, no CRDT library. The set union is the merge, and the canonical `ref`-tree ordering turns the set back into a sequence. Git is reduced to a transport for append-only text, which is the one thing it is unambiguously good at.
 
-- Buys: everything in V0, plus real transactions (a multi-event command is
-  atomic by the database rather than by hoping one `write(2)` is), plus
-  constant-time time travel (section 5), plus a place to put attachments and
-  derived indexes without inventing a file layout.
-- Costs: two representations of the same events, so the export must be proven
-  deterministic and append-only per author. Rules: an author only ever exports
-  their own events, only in ULID order, only appending. Violate that and git
-  starts producing diffs in the middle of files.
-- Loses: the DB can be deleted and rebuilt from the mirror, so nothing is lost
-  permanently, but a machine mid-sync has state in two places.
+- Buys: everything in V0, plus real transactions (a multi-event command is atomic by the database rather than by hoping one `write(2)` is), plus constant-time time travel (section 5), plus a place to put attachments and derived indexes without inventing a file layout.
 
-The failure mode to design against is a torn export: events written to the DB,
-process dies before the mirror is appended. Fix: record the export watermark in
-the same transaction that reads the events, and make the mirror append
-idempotent (re-appending an already-present ULID is caught on import by `INSERT
-OR IGNORE`, and on export by comparing the file's last line).
+- Costs: two representations of the same events, so the export must be proven deterministic and append-only per author. Rules: an author only ever exports their own events, only in ULID order, only appending. Violate that and git starts producing diffs in the middle of files.
+
+- Loses: the DB can be deleted and rebuilt from the mirror, so nothing is lost permanently, but a machine mid-sync has state in two places.
+
+The failure mode to design against is a torn export: events written to the DB, process dies before the mirror is appended. Fix: record the export watermark in the same transaction that reads the events, and make the mirror append idempotent (re-appending an already-present ULID is caught on import by `INSERT OR IGNORE`, and on export by comparing the file's last line).
 
 ### V2 — Plain CRUD, no event log
 
-Mutable `nodes` rows. Undo via a bounded journal or the SQLite session
-extension. No `ref` tree, no ranks-as-events, no replay.
+Mutable `nodes` rows. Undo via a bounded journal or the SQLite session extension. No `ref` tree, no ranks-as-events, no replay.
 
-- Buys: dramatically less code. The current tree is ~19k lines of Go; V2 is
-  plausibly 4-6k, because `event`, `state`, half of `session` and all of the
-  ordering machinery disappear.
-- Loses: history, time travel, offline multi-author merge, and undo-of-anything
-  rather than undo-of-the-last-delete. Sibling ordering becomes an `ORDER BY`
-  on a float or an integer with periodic renumbering — fine for one user,
-  no longer a mergeable value.
-- Sync: file-level only. Note that syncing a live SQLite file through Dropbox,
-  iCloud or Syncthing is a known corruption source: the `-wal` and `-shm`
-  sidecars are copied inconsistently. If V2 syncs at all, it must be via
-  `VACUUM INTO` a snapshot with the tool closed, which is not really sync.
+- Buys: dramatically less code. The current tree is ~19k lines of Go; V2 is plausibly 4-6k, because `event`, `state`, half of `session` and all of the ordering machinery disappear.
 
-V2 is the honest answer if the goal is "a small, fast, local notes tool with a
-proper query language". It should not be sold as a gnotes variant; it is a
-different tool that shares a UI.
+- Loses: history, time travel, offline multi-author merge, and undo-of-anything rather than undo-of-the-last-delete. Sibling ordering becomes an `ORDER BY` on a float or an integer with periodic renumbering — fine for one user, no longer a mergeable value.
+
+- Sync: file-level only. Note that syncing a live SQLite file through Dropbox, iCloud or Syncthing is a known corruption source: the `-wal` and `-shm` sidecars are copied inconsistently. If V2 syncs at all, it must be via `VACUUM INTO` a snapshot with the tool closed, which is not really sync.
+
+V2 is the honest answer if the goal is "a small, fast, local notes tool with a proper query language". It should not be sold as a gnotes variant; it is a different tool that shares a UI.
 
 ## 4. Schema sketch (V1)
 
@@ -230,44 +168,27 @@ CREATE VIRTUAL TABLE nodes_fts USING fts5(
 );
 ```
 
-The `CHECK` on the last line of `nodes` is worth noting: the rule "task fields
-are refused on notes" currently lives in the materializer and is enforced by
-convention across four front ends. In the DB variant it becomes an invariant the
-storage layer cannot be talked out of. That is a real, if modest, gain in
-correctness.
+The `CHECK` on the last line of `nodes` is worth noting: the rule "task fields are refused on notes" currently lives in the materializer and is enforced by convention across four front ends. In the DB variant it becomes an invariant the storage layer cannot be talked out of. That is a real, if modest, gain in correctness.
 
-**The `seq` wrinkle.** Canonical order is a depth-first walk of the `ref` tree,
-which means an event arriving from another author can insert *between* existing
-events and shift the suffix. Three options:
+**The `seq` wrinkle.** Canonical order is a depth-first walk of the `ref` tree, which means an event arriving from another author can insert *between* existing events and shift the suffix. Three options:
 
-1. Do not store `seq`; order at load time as today. Correct, but throws away the
-   incremental-startup win.
-2. Store `seq` and renumber the affected suffix on import. Renumbering only
-   happens on sync, touches at most the events after the insertion point, and is
-   a single `UPDATE ... WHERE seq >= ?` in one transaction. Simple; probably
-   right.
-3. Give `seq` gaps (like ranks) so most insertions are local. Solves a problem
-   that option 2 does not obviously have. Do not do this first.
+1. Do not store `seq`; order at load time as today. Correct, but throws away the incremental-startup win.
+
+2. Store `seq` and renumber the affected suffix on import. Renumbering only happens on sync, touches at most the events after the insertion point, and is a single `UPDATE ... WHERE seq >= ?` in one transaction. Simple; probably right.
+
+3. Give `seq` gaps (like ranks) so most insertions are local. Solves a problem that option 2 does not obviously have. Do not do this first.
 
 Start with 2, and measure before considering 3.
 
 ## 5. What the database buys that JSONL cannot
 
-Not startup speed. The measured cost today is ~1.1 us/event: 10k events in
-11.5 ms, 50k in 54 ms. That is already imperceptible, and a snapshot cache (V0
-without SQL) would fix the tail without any of this. Arguing for the variant on
-performance grounds is arguing from the weakest position.
+Not startup speed. The measured cost today is ~1.1 us/event: 10k events in 11.5 ms, 50k in 54 ms. That is already imperceptible, and a snapshot cache (V0 without SQL) would fix the tail without any of this. Arguing for the variant on performance grounds is arguing from the weakest position.
 
 The real case is **queries the current design cannot answer cheaply**:
 
-- **Ranked full text.** FTS5 gives BM25 with per-column weights, phrase search,
-  prefix search, `NEAR`, and snippet extraction. The in-memory inverted index
-  gives term matching with hand-rolled ranking. Verified that
-  `contentless_delete=1` works on SQLite 3.51, so a contentless FTS table is
-  also available if the duplicated text is unwelcome.
+- **Ranked full text.** FTS5 gives BM25 with per-column weights, phrase search, prefix search, `NEAR`, and snippet extraction. The in-memory inverted index gives term matching with hand-rolled ranking. Verified that `contentless_delete=1` works on SQLite 3.51, so a contentless FTS table is also available if the duplicated text is unwelcome.
 
-- **Constant-time time travel.** Today `--at` replays a prefix: linear in
-  history. A bitemporal side table makes it an index seek:
+- **Constant-time time travel.** Today `--at` replays a prefix: linear in history. A bitemporal side table makes it an index seek:
 
   ```sql
   CREATE TABLE node_history (
@@ -277,21 +198,13 @@ The real case is **queries the current design cannot answer cheaply**:
   ) STRICT;
   ```
 
-  "every task that was open on 1 June" stops being a replay and becomes a
-  `WHERE from_seq <= ? AND (to_seq IS NULL OR to_seq > ?)`. Cost: roughly one
-  extra row per event. This is the single most interesting thing the variant
-  unlocks, and it is a *new capability*, not a faster version of an old one.
+  "every task that was open on 1 June" stops being a replay and becomes a `WHERE from_seq <= ? AND (to_seq IS NULL OR to_seq > ?)`. Cost: roughly one extra row per event. This is the single most interesting thing the variant unlocks, and it is a *new capability*, not a faster version of an old one.
 
-- **Aggregates over history.** Completion rates, burndown, stale notes,
-  per-author activity, tag co-occurrence. All one query; none currently
-  expressible.
+- **Aggregates over history.** Completion rates, burndown, stale notes, per-author activity, tag co-occurrence. All one query; none currently expressible.
 
-- **Joins against other project data.** `ATTACH` a CI database, a coverage
-  database, an exported issue tracker. The notes stop being an island.
+- **Joins against other project data.** `ATTACH` a CI database, a coverage database, an exported issue tracker. The notes stop being an island.
 
-- **Change notification without polling stat().** `PRAGMA data_version`
-  increments when *another* connection commits and does not move for your own
-  writes. Verified:
+- **Change notification without polling stat().** `PRAGMA data_version` increments when *another* connection commits and does not move for your own writes. Verified:
 
   ```text
   reader data_version: 2
@@ -299,8 +212,7 @@ The real case is **queries the current design cannot answer cheaply**:
   own commit does not bump: 3
   ```
 
-  That replaces the mtime/size fingerprint with a primitive that cannot produce
-  a false negative from coarse timestamp granularity.
+  That replaces the mtime/size fingerprint with a primitive that cannot produce a false negative from coarse timestamp granularity.
 
 ## 6. What breaks, and how badly
 
@@ -316,19 +228,13 @@ The real case is **queries the current design cannot answer cheaply**:
 
 Additional risks that apply to any of them:
 
-- **Network filesystems.** SQLite's locking is unreliable on NFS and SMB. The
-  current design is immune because appends to distinct files need no locking. If
-  anyone keeps a project on a network share, the variant regresses.
-- **`SQLITE_BUSY`.** Four front ends writing means every write path needs a
-  `busy_timeout` and a retry policy. Today the kernel's `O_APPEND` handles this
-  for free.
-- **Corruption is now a single point of failure.** One bad page loses the
-  project. Today a truncated log loses a tail and the rest still replays. V1
-  mitigates this because the git mirror is a full backup; V2 does not.
-- **Two writers of the same author on one machine** currently both append and
-  the ordering sorts it out. With a DB they serialize, which is better, but the
-  `ref` chain has to be read inside the write transaction or two commands will
-  branch from the same ref for no reason.
+- **Network filesystems.** SQLite's locking is unreliable on NFS and SMB. The current design is immune because appends to distinct files need no locking. If anyone keeps a project on a network share, the variant regresses.
+
+- **`SQLITE_BUSY`.** Four front ends writing means every write path needs a `busy_timeout` and a retry policy. Today the kernel's `O_APPEND` handles this for free.
+
+- **Corruption is now a single point of failure.** One bad page loses the project. Today a truncated log loses a tail and the rest still replays. V1 mitigates this because the git mirror is a full backup; V2 does not.
+
+- **Two writers of the same author on one machine** currently both append and the ordering sorts it out. With a DB they serialize, which is better, but the `ref` chain has to be read inside the write transaction or two commands will branch from the same ref for no reason.
 
 ## 7. Implementation language
 
@@ -343,22 +249,11 @@ Requirement is a self-contained single executable. Ranked by fit:
 | C# NativeAOT | 12-20 MB | single file | good tooling, heavy runtime footprint |
 | Python + PyInstaller | 20-60 MB | bundle, not a binary | `sqlite3` is stdlib, so prototyping is fastest here; ships badly |
 
-Sizes other than the current build are estimates and should be measured before
-being relied on. The current binary is 7.4 MB with the web view and 4.2 MB with
-`-tags noweb`; a pure-Go SQLite would more than double the slim build, which is
-the specific cost that argued against it before.
+Sizes other than the current build are estimates and should be measured before being relied on. The current binary is 7.4 MB with the web view and 4.2 MB with `-tags noweb`; a pure-Go SQLite would more than double the slim build, which is the specific cost that argued against it before.
 
-**The decisive factor is not the language, it is how much is being reused.**
-Under V1, only `store` is replaced and `state` gains an incremental-fold path.
-`event`, `session`, `rank`, `ulid`, `search` (or its removal), `cli`, `tui`,
-`web` and `mcp` are all untouched, because `session` already talks to storage
-through a narrow interface and `state.Materialize` is a pure function. That is
-perhaps 1500-2500 lines of change against a 19k-line tree. Rewriting in Rust to
-change the storage layer is throwing away 17k working, tested lines to avoid a
-4 MB dependency.
+**The decisive factor is not the language, it is how much is being reused.** Under V1, only `store` is replaced and `state` gains an incremental-fold path. `event`, `session`, `rank`, `ulid`, `search` (or its removal), `cli`, `tui`, `web` and `mcp` are all untouched, because `session` already talks to storage through a narrow interface and `state.Materialize` is a pure function. That is perhaps 1500-2500 lines of change against a 19k-line tree. Rewriting in Rust to change the storage layer is throwing away 17k working, tested lines to avoid a 4 MB dependency.
 
-So: **stay in Go for a variant; choose Rust only if the intent is V2, a
-different and much smaller program.**
+So: **stay in Go for a variant; choose Rust only if the intent is V2, a different and much smaller program.**
 
 ## 8. Port map (V1, in Go)
 
@@ -373,49 +268,29 @@ different and much smaller program.**
 | `internal/gitsync` | gains export/import of the text mirror around the existing commit/pull |
 | `internal/cli`, `tui`, `web`, `mcp` | none, if the seam holds. If any of them break, the seam was not where it was claimed to be — which is itself worth learning |
 
-That last row is the real test. If a storage swap requires touching the four
-front ends, the "every front end is a shell over one write path" claim in the
-README is weaker than it reads.
+That last row is the real test. If a storage swap requires touching the four front ends, the "every front end is a shell over one write path" claim in the README is weaker than it reads.
 
 ## 9. Suggested order of work
 
-1. **`gnotes export`** in the existing tool. One command, no architectural
-   commitment, and it answers the SQL-and-analytics wish immediately. It also
-   produces the schema and the fold code that V1 needs, so none of it is
-   throwaway. **Done** — see section 11.
-2. **Measure V0.** Wire the export up as a gitignored cache with FTS5 and
-   compare search quality and startup against the current build on a synthetic
-   50k-event log. If FTS5 does not noticeably beat the in-memory index on real
-   queries, the strongest argument for the variant is gone.
-3. **V1 behind a build tag or a `store` field in `project.json`.** Both backends
-   in one binary, the same test suite run twice. Any behavioural divergence is a
-   bug in one of them, which is the cheapest possible way to keep them honest.
-4. **Decide.** Either V1 wins and the JSONL becomes a mirror, or it does not and
-   step 1 was still worth having.
+1. **`gnotes export`** in the existing tool. One command, no architectural commitment, and it answers the SQL-and-analytics wish immediately. It also produces the schema and the fold code that V1 needs, so none of it is throwaway. **Done** — see section 11.
+
+2. **Measure V0.** Wire the export up as a gitignored cache with FTS5 and compare search quality and startup against the current build on a synthetic 50k-event log. If FTS5 does not noticeably beat the in-memory index on real queries, the strongest argument for the variant is gone.
+
+3. **V1 behind a build tag or a `store` field in `project.json`.** Both backends in one binary, the same test suite run twice. Any behavioural divergence is a bug in one of them, which is the cheapest possible way to keep them honest.
+
+4. **Decide.** Either V1 wins and the JSONL becomes a mirror, or it does not and step 1 was still worth having.
 
 V2 is a separate repository if it happens at all.
 
 ## 10. Step 1 as built
 
-`gnotes export` writes a **SQL script**, not a database file. That is a
-deliberate departure from the sketch above, and the reason is the last open
-question: linking a driver to write a `.db` directly would have cost 4-6 MB on
-a binary whose entire browser view costs 3 MB, for a command most people will
-never run. Emitting text costs **65 KB measured** (7,768,818 to 7,835,266 bytes
-with `-s -w`), needs no new module in `go.mod`, and loses nothing — `sqlite3`
-reads a script from a pipe, so the user-facing form is one character longer:
+`gnotes export` writes a **SQL script**, not a database file. That is a deliberate departure from the sketch above, and the reason is the last open question: linking a driver to write a `.db` directly would have cost 4-6 MB on a binary whose entire browser view costs 3 MB, for a command most people will never run. Emitting text costs **65 KB measured** (7,768,818 to 7,835,266 bytes with `-s -w`), needs no new module in `go.mod`, and loses nothing — `sqlite3` reads a script from a pipe, so the user-facing form is one character longer:
 
 ```sh
 gnotes export | sqlite3 notes.db
 ```
 
-The exact-text form has two side benefits that a driver would not have given.
-The output is byte-for-byte reproducible from the same log, so a regenerated
-export diffs cleanly against the previous one. And the tests can assert on the
-script directly, then pipe it through the system `sqlite3` to confirm a real
-database accepts it — the package under test has no database dependency, so
-neither does its test suite, and the checks that need `sqlite3` skip where it
-is absent rather than failing.
+The exact-text form has two side benefits that a driver would not have given. The output is byte-for-byte reproducible from the same log, so a regenerated export diffs cleanly against the previous one. And the tests can assert on the script directly, then pipe it through the system `sqlite3` to confirm a real database accepts it — the package under test has no database dependency, so neither does its test suite, and the checks that need `sqlite3` skip where it is absent rather than failing.
 
 What shipped, against the schema in section 4:
 
@@ -429,77 +304,43 @@ What shipped, against the schema in section 4:
 
 Three things were settled by building it rather than by argument.
 
-**FTS5 external content can be backed by a view.** That was the open question in
-section 4 — `tags` is not a column on `nodes`, so `content='nodes'` could not
-work. A view joining the tag table supplies the column, `content_rowid` points
-at the surrogate integer key, and `INSERT INTO nodes_fts(nodes_fts)
-VALUES('rebuild')` populates it. The view also filters deleted entries, so a
-removed note leaves the index without a trigger.
+**FTS5 external content can be backed by a view.** That was the open question in section 4 — `tags` is not a column on `nodes`, so `content='nodes'` could not work. A view joining the tag table supplies the column, `content_rowid` points at the surrogate integer key, and `INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild')` populates it. The view also filters deleted entries, so a removed note leaves the index without a trigger.
 
-**Foreign keys can stay enabled for the whole load.** Nodes are emitted parents
-first, ordered by depth and then by id, which makes the import a structural
-check on the exported tree rather than only a copy. A parent that is somehow
-not in the tree is written as NULL instead: an export that refuses to load
-would be worse than one that reports an orphan as a root.
+**Foreign keys can stay enabled for the whole load.** Nodes are emitted parents first, ordered by depth and then by id, which makes the import a structural check on the exported tree rather than only a copy. A parent that is somehow not in the tree is written as NULL instead: an export that refuses to load would be worse than one that reports an orphan as a root.
 
-**The history fold is straightforward and is the piece V1 reuses.** It is the
-same walk as `state.Materialize`, recording what each event changed rather than
-only where it ended up: scalars close their open interval when set again, set
-members close theirs when removed. Canonical values are stored, not typed ones,
-so `prio h` and `priority high` compare equal in a query. About 120 lines.
+**The history fold is straightforward and is the piece V1 reuses.** It is the same walk as `state.Materialize`, recording what each event changed rather than only where it ended up: scalars close their open interval when set again, set members close theirs when removed. Canonical values are stored, not typed ones, so `prio h` and `priority high` compare equal in a query. About 120 lines.
 
-What this does *not* settle: nothing here measures V0. The export builds a
-database from a full replay, which is what step 2 has to replace with an
-incremental fold before the cache is worth anything.
+What this does *not* settle: nothing here measures V0. The export builds a database from a full replay, which is what step 2 has to replace with an incremental fold before the cache is worth anything.
 
 ## 11. Open questions
 
-- Is the driver query capability, startup speed, search quality, or curiosity?
-  The four have different cheapest answers, and only the first justifies this.
-- Does the variant need to stay multi-author, or is this a single-user tool?
-  That single answer chooses between V1 and V2.
-- Does it need to stay git-native? If the notes no longer live in the repo and
-  travel with the code, a large part of the original premise is gone and the
-  design should be reconsidered from scratch rather than ported.
-- Is a 4-6 MB binary increase acceptable? It is larger than the entire embedded
-  web view, which was itself considered worth a build tag to remove. Step 1
-  sidestepped this by emitting text, but V0 and V1 cannot: they need a driver
-  in the binary, so the question returns in full at step 2.
+- Is the driver query capability, startup speed, search quality, or curiosity? The four have different cheapest answers, and only the first justifies this.
+
+- Does the variant need to stay multi-author, or is this a single-user tool? That single answer chooses between V1 and V2.
+
+- Does it need to stay git-native? If the notes no longer live in the repo and travel with the code, a large part of the original premise is gone and the design should be reconsidered from scratch rather than ported.
+
+- Is a 4-6 MB binary increase acceptable? It is larger than the entire embedded web view, which was itself considered worth a build tag to remove. Step 1 sidestepped this by emitting text, but V0 and V1 cannot: they need a driver in the binary, so the question returns in full at step 2.
 
 ## 12. What was built (2026-09-15)
 
-A variant of V2 that keeps history: tables are the truth, and a `changes` table
-filled by triggers records every field change. This answers section 11 as
-single-user, committed to git as one file, with direct SQL edits allowed. The
-database is `.gnotes/gnotes.db` in rollback-journal mode, so the committed file
-is complete.
+A variant of V2 that keeps history: tables are the truth, and a `changes` table filled by triggers records every field change. This answers section 11 as single-user, committed to git as one file, with direct SQL edits allowed. The database is `.gnotes/gnotes.db` in rollback-journal mode, so the committed file is complete.
 
-- Sessions still stage operations (`event.Event`) against the in-memory tree,
-  so every rule in `state.apply` is kept; `Commit` writes only the rows those
-  operations changed. `event`, `rank` and the front ends are nearly untouched.
-- Time travel replays `changes`. History attribution uses a one-row `writer`
-  table that gnotes sets and clears inside its transaction, since a trigger
-  cannot see the connection's user; other clients' edits are unattributed.
-- `internal/search` became an FTS5 query builder; `internal/sqlexport` and
-  `internal/gitsync` were deleted.
-- Legacy JSONL projects are imported by replaying each event and writing its
-  changed rows at the event's time.
+- Sessions still stage operations (`event.Event`) against the in-memory tree, so every rule in `state.apply` is kept; `Commit` writes only the rows those operations changed. `event`, `rank` and the front ends are nearly untouched.
 
-The binary is 12.8 MB (9.2 MB with `noweb`), 3.9 MB above the JSONL build.
-Command timings against the JSONL build are in section 13.
+- Time travel replays `changes`. History attribution uses a one-row `writer` table that gnotes sets and clears inside its transaction, since a trigger cannot see the connection's user; other clients' edits are unattributed.
+
+- `internal/search` became an FTS5 query builder; `internal/sqlexport` and `internal/gitsync` were deleted.
+
+- Legacy JSONL projects are imported by replaying each event and writing its changed rows at the event's time.
+
+The binary is 12.8 MB (9.2 MB with `noweb`), 3.9 MB above the JSONL build. Command timings against the JSONL build are in section 13.
 
 ## 13. Crossover against the JSONL build (2026-09-15)
 
-Section 5 argued that speed is the weakest case for a database. Measured
-against the last JSONL build (commit 2203806), that holds: the SQLite build is
-slower on small projects and faster on large ones, and the difference is under
-4 ms until a project reaches thousands of entries.
+Section 5 argued that speed is the weakest case for a database. Measured against the last JSONL build (commit 2203806), that holds: the SQLite build is slower on small projects and faster on large ones, and the difference is under 4 ms until a project reaches thousands of entries.
 
-**Method.** A generated legacy project of N tasks, each with a ~250-byte body,
-two tags and a priority: five events per task. The JSONL build ran on the log;
-the SQLite build ran on a copy imported from it, so both hold the same data.
-Median of 50 runs per command, process start included, old and new runs
-alternated. 16-thread Linux machine, warm filesystem cache.
+**Method.** A generated legacy project of N tasks, each with a ~250-byte body, two tags and a priority: five events per task. The JSONL build ran on the log; the SQLite build ran on a copy imported from it, so both hold the same data. Median of 50 runs per command, process start included, old and new runs alternated. 16-thread Linux machine, warm filesystem cache.
 
 | tasks | `ls` JSONL / SQLite | `search` | `show` | `note` | on disk |
 |---|---|---|---|---|---|
@@ -511,26 +352,14 @@ alternated. 16-thread Linux machine, warm filesystem cache.
 
 **Findings.**
 
-- Reads cross over between 100 and 500 tasks: 18-23% slower at 100, 16-24%
-  faster at 500, 31-42% faster at 5,000.
-- Writes are within 3% at 500 and 1,000 tasks, and 33% faster at 5,000. At 5
-  and 100 tasks a write costs 3-4 ms more. The SQLite build syncs each commit
-  (`synchronous=FULL`) and the JSONL build did not sync; the split between that
-  and opening the database was not profiled.
-- The database is 3.3-3.9 times the size of the JSONL log for the same
-  content, and git stores the whole file in each commit that changes it. This
-  is a larger cost than any timing difference in the table.
-- Both builds returned identical results at 5,000 tasks: 5,020 `ls` lines and
-  1,072 search hits.
+- Reads cross over between 100 and 500 tasks: 18-23% slower at 100, 16-24% faster at 500, 31-42% faster at 5,000.
 
-**Bearing on section 11.** Speed does not decide between per-project and
-global notes: below 1,000 entries neither build is perceptibly faster. The
-deciding factors remain the number of machines a project is written from and
-whether it is kept in git.
+- Writes are within 3% at 500 and 1,000 tasks, and 33% faster at 5,000. At 5 and 100 tasks a write costs 3-4 ms more. The SQLite build syncs each commit (`synchronous=FULL`) and the JSONL build did not sync; the split between that and opening the database was not profiled.
 
-**Limits.** One synthetic shape. Real projects with longer bodies or longer
-edit histories per entry would move the crossover; a longer history should
-lower it, since the JSONL build replays every event on each command, but that
-was not measured. The `note` runs added 50 entries to each copy during the
-run, which matters only at 5 tasks. The generator was a throwaway test and is
-not in the tree.
+- The database is 3.3-3.9 times the size of the JSONL log for the same content, and git stores the whole file in each commit that changes it. This is a larger cost than any timing difference in the table.
+
+- Both builds returned identical results at 5,000 tasks: 5,020 `ls` lines and 1,072 search hits.
+
+**Bearing on section 11.** Speed does not decide between per-project and global notes: below 1,000 entries neither build is perceptibly faster. The deciding factors remain the number of machines a project is written from and whether it is kept in git.
+
+**Limits.** One synthetic shape. Real projects with longer bodies or longer edit histories per entry would move the crossover; a longer history should lower it, since the JSONL build replays every event on each command, but that was not measured. The `note` runs added 50 entries to each copy during the run, which matters only at 5 tasks. The generator was a throwaway test and is not in the tree.

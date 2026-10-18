@@ -38,7 +38,6 @@ const (
 var (
 	scheme    = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*:`)
 	lineRange = regexp.MustCompile(`^L(\d+)(?:-L(\d+))?$`)
-	escaped   = regexp.MustCompile(`\\([[:punct:]])`)
 )
 
 type classified struct {
@@ -70,7 +69,6 @@ func (w *Wiki) classify(page string, l markdown.Link, lineCounts map[string]int)
 		return classified{kind: KindExternal, status: StatusOK}
 	}
 
-	target = escaped.ReplaceAllString(target, "$1")
 	if i := strings.IndexByte(target, '?'); i >= 0 {
 		target = target[:i]
 	}
@@ -317,6 +315,67 @@ func union(a, b []string) []string {
 	return out
 }
 
+// reclassifyDirLinks classifies again the markdown links, on pages this
+// refresh did not write, that name a directory listed in affected as "dir":
+// as a file link to it, or as its README.
+func (wr *writer) reclassifyDirLinks() error {
+	tx := wr.tx
+	prefix, err := filepath.Rel(wr.w.Repo, wr.w.PagesPath())
+	if err != nil {
+		return err
+	}
+	if prefix = filepath.ToSlash(prefix); prefix == "." {
+		prefix = ""
+	} else {
+		prefix += "/"
+	}
+	rows, err := tx.Query(`SELECT rowid, page, target, anchor, kind, resolved, status FROM links
+		WHERE form = ?2 AND page NOT IN (SELECT k FROM affected WHERE kind = 'id') AND (
+			(kind = ?3 AND resolved IN (SELECT ?1 || k FROM affected WHERE kind = 'dir'))
+			OR (kind IN (?4, ?5) AND lower(resolved) IN (SELECT lower(k) || '/readme' FROM affected WHERE kind = 'dir')))`,
+		prefix, string(markdown.FormMarkdown), KindFile, KindPage, KindHeading)
+	if err != nil {
+		return err
+	}
+	type link struct {
+		rowid                                        int64
+		page, target, anchor, kind, resolved, status string
+	}
+	var links []link
+	for rows.Next() {
+		var l link
+		if err := rows.Scan(&l.rowid, &l.page, &l.target, &l.anchor, &l.kind, &l.resolved, &l.status); err != nil {
+			rows.Close()
+			return err
+		}
+		links = append(links, l)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil || len(links) == 0 {
+		return err
+	}
+
+	update, err := tx.Prepare(`UPDATE links SET kind = ?, resolved = ?, status = ?, line_from = ?, line_to = ? WHERE rowid = ?`)
+	if err != nil {
+		return err
+	}
+	defer update.Close()
+	for _, l := range links {
+		c := wr.w.classify(l.page, markdown.Link{Form: markdown.FormMarkdown, Target: l.target, Anchor: l.anchor}, wr.lineCounts)
+		if c.kind == KindPage || c.kind == KindHeading {
+			if c.resolved, c.status, err = wr.ix.resolve(l.page, string(markdown.FormMarkdown), l.target, l.anchor, c.resolved); err != nil {
+				return err
+			}
+		}
+		if c.kind != l.kind || c.resolved != l.resolved || c.status != l.status {
+			if _, err := update.Exec(c.kind, c.resolved, c.status, c.from, c.to, l.rowid); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // resolve re-resolves links on pages this refresh did not write whose target
 // names a page it added, changed or removed, by path, title or file name. Links
 // on written pages were resolved as they were inserted. Only rows whose result
@@ -333,7 +392,15 @@ func (wr *writer) resolve() error {
 	if err != nil {
 		return err
 	}
-	for kind, keys := range map[string]map[string]bool{"id": wr.ids, "path": wr.paths, "title": wr.titles, "stem": wr.stems} {
+	// A page added or removed under a directory can turn a link to it from a
+	// file link into its README, or back.
+	dirs := map[string]bool{}
+	for id := range wr.ids {
+		for d := path.Dir(id); d != "."; d = path.Dir(d) {
+			dirs[d] = true
+		}
+	}
+	for kind, keys := range map[string]map[string]bool{"id": wr.ids, "path": wr.paths, "title": wr.titles, "stem": wr.stems, "dir": dirs} {
 		for k := range keys {
 			if _, err := ins.Exec(kind, k); err != nil {
 				ins.Close()
@@ -342,6 +409,11 @@ func (wr *writer) resolve() error {
 		}
 	}
 	ins.Close()
+	if len(dirs) > 0 {
+		if err := wr.reclassifyDirLinks(); err != nil {
+			return err
+		}
+	}
 
 	rows, err := tx.Query(`SELECT rowid, page, form, target, anchor, resolved, status FROM links
 		WHERE kind IN ('page', 'heading') AND page NOT IN (SELECT k FROM affected WHERE kind = 'id') AND (

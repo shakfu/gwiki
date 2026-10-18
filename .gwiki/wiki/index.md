@@ -32,4 +32,4 @@ Pages that fit no section sit at the top: [[Glossary]] and [[2026 Objectives]].
 - **A README per directory.** `[[Architecture]]` and a link to `architecture/` both reach `architecture/README.md`. See [[Writing pages#Sections]].
 - **Nesting follows the code.** [[Architecture]] has a `tui/` section because the terminal interface is large enough to need several pages.
 - **Tags cut across sections.** `#tui` marks every page about the terminal interface, wherever it sits.
-- **Links into the code carry line ranges**, such as [the resolver](/internal/wiki/resolve.go#L256), so `gwiki check` reports them when the file shrinks.
+- **Links into the code carry line ranges**, such as [the resolver](/internal/wiki/resolve.go#L254), so `gwiki check` reports them when the file shrinks.

@@ -64,7 +64,7 @@ func (s *Snapshot) Links(page string, src []byte) []Link {
 			c.resolved, c.status, _ = s.ix.resolve(page, string(l.Form), l.Target, l.Anchor, c.resolved)
 		}
 		out = append(out, Link{Page: page, Line: l.Line, Col: l.Col, Form: string(l.Form), Image: l.Image,
-			Label: l.Label, Target: l.Target, Anchor: l.Anchor, Kind: c.kind, Resolved: c.resolved, Status: c.status,
+			Label: l.Label, Target: l.Target, Anchor: l.Anchor, Dest: l.Dest, Kind: c.kind, Resolved: c.resolved, Status: c.status,
 			Ref: l.Ref, Start: l.Start, End: l.End, DestStart: l.DestStart, DestEnd: l.DestEnd})
 	}
 	return out

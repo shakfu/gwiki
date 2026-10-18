@@ -45,6 +45,7 @@ type Link struct {
 	Label    string `json:"label"`
 	Target   string `json:"target"`
 	Anchor   string `json:"anchor,omitempty"`
+	Dest     string `json:"-"` // a markdown link's destination as written
 	Kind     string `json:"kind"`
 	Resolved string `json:"resolved,omitempty"`
 	Status   string `json:"status"`
@@ -60,6 +61,9 @@ type Link struct {
 
 // Written renders the link's destination as it appears in the page.
 func (l Link) Written() string {
+	if l.Form == "markdown" {
+		return l.Dest
+	}
 	dest := l.Target
 	if l.Anchor != "" {
 		dest += "#" + l.Anchor
@@ -98,6 +102,9 @@ type Task struct {
 	// Box is the offset of a checklist item's box character, 0 for a task page.
 	Box int `json:"-"`
 }
+
+// errNoPage reports that Find matched no page.
+var errNoPage = errors.New("no page matches")
 
 // ErrAmbiguous lists the pages a reference could mean.
 type ErrAmbiguous struct {
@@ -188,7 +195,7 @@ func (w *Wiki) Find(ref string) (PageInfo, error) {
 			return PageInfo{}, &ErrAmbiguous{Ref: ref, Candidates: found}
 		}
 	}
-	return PageInfo{}, fmt.Errorf("no page matches %q", ref)
+	return PageInfo{}, fmt.Errorf("%w %q", errNoPage, ref)
 }
 
 // Page returns a page in full.
@@ -223,7 +230,7 @@ func (w *Wiki) Page(p string) (Page, error) {
 	return out, err
 }
 
-const linkColumns = `page, line, col, form, image, label, target, anchor, kind, resolved, status, ref, start, stop, dest_start, dest_stop`
+const linkColumns = `page, line, col, form, image, label, target, anchor, dest, kind, resolved, status, ref, start, stop, dest_start, dest_stop`
 
 func (w *Wiki) links(where string, args ...any) ([]Link, error) {
 	rows, err := w.db.Query(`SELECT `+linkColumns+` FROM links WHERE `+where+` ORDER BY page, line, col`, args...)
@@ -234,7 +241,7 @@ func (w *Wiki) links(where string, args ...any) ([]Link, error) {
 	out := []Link{}
 	for rows.Next() {
 		var l Link
-		if err := rows.Scan(&l.Page, &l.Line, &l.Col, &l.Form, &l.Image, &l.Label, &l.Target, &l.Anchor, &l.Kind, &l.Resolved, &l.Status,
+		if err := rows.Scan(&l.Page, &l.Line, &l.Col, &l.Form, &l.Image, &l.Label, &l.Target, &l.Anchor, &l.Dest, &l.Kind, &l.Resolved, &l.Status,
 			&l.Ref, &l.Start, &l.End, &l.DestStart, &l.DestEnd); err != nil {
 			return nil, err
 		}

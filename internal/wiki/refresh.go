@@ -502,8 +502,8 @@ var writerStatements = map[string]string{
 	"ins assign": `INSERT INTO assignees (page, who) VALUES (?, ?)`,
 	"ins fts":    `INSERT INTO pages_fts (rowid, title, headings, tags, body) VALUES (?, ?, ?, ?, ?)`,
 	"ins link": `INSERT INTO links (page, line, col, start, stop, dest_start, dest_stop, form, image, ref,
-			label, target, anchor, kind, resolved, line_from, line_to, status, key_path, key_hyph, key_stem)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			label, target, anchor, dest, kind, resolved, line_from, line_to, status, key_path, key_hyph, key_stem)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	"ins check": `INSERT INTO checklist (page, line, text, done, due, box) VALUES (?, ?, ?, ?, ?, ?)`,
 }
 
@@ -629,7 +629,7 @@ func (wr *writer) insert(p parsed) error {
 			kp, kh, ks = wikiKeys(l.Target)
 		}
 		if err := wr.exec("ins link", id, l.Line, l.Col, l.Start, l.End, l.DestStart, l.DestEnd, string(l.Form), l.Image, l.Ref,
-			l.Label, l.Target, l.Anchor, c.kind, c.resolved, c.from, c.to, c.status, kp, kh, ks); err != nil {
+			l.Label, l.Target, l.Anchor, l.Dest, c.kind, c.resolved, c.from, c.to, c.status, kp, kh, ks); err != nil {
 			return err
 		}
 	}
