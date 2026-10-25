@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Fro
 
 ## [Unreleased]
 
+### Fixed
+
+**`gwiki lsp` on Windows could not find the wiki.** `file:///C:/x` parsed to the path `\C:\x`, and a drive path was written as `file://C:/x`, whose drive parses as the host. Drive letters are now upper-cased, so VS Code's `c:` and Go's `C:` name the same buffer, and a URI host names a UNC share.
+
+### Changed
+
+**The test for a same-size edit with its mtime restored skips on Windows.** Windows has no inode change time, so `rsync -t` and `tar` edits go unnoticed there. Reading NTFS ChangeTime would cost a file open per page per refresh.
+
 ## [0.6.0]
 
 ### Added

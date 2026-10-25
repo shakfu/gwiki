@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -227,6 +228,17 @@ func (c *client) diagnostics(uri string) []diagnostic {
 	}
 }
 
+// diagnosticsUntil waits for diagnostics of uri that satisfy ok. A polling
+// server may first publish a file caught mid-write, truncated but not written.
+func (c *client) diagnosticsUntil(uri string, ok func([]diagnostic) bool) []diagnostic {
+	c.t.Helper()
+	for {
+		if d := c.diagnostics(uri); ok(d) {
+			return d
+		}
+	}
+}
+
 func diagnosticsFor(m message, uri string) ([]diagnostic, bool) {
 	if m.Method != "textDocument/publishDiagnostics" {
 		return nil, false
@@ -269,6 +281,28 @@ func posOf(t *testing.T, body, needle string, skip int) Position {
 }
 
 // ---------------------------------------------------------------- tests
+
+func TestFileURIs(t *testing.T) {
+	dir := t.TempDir()
+	if got, ok := uriPath(fileURI(dir)); !ok || got != dir {
+		t.Fatalf("uriPath(fileURI(%q)) = %q, %v", dir, got, ok)
+	}
+	if runtime.GOOS != "windows" {
+		return
+	}
+	if got := fileURI(`C:\a b\x.md`); got != "file:///C:/a%20b/x.md" {
+		t.Fatalf("fileURI = %q", got)
+	}
+	for uri, want := range map[string]string{
+		"file:///C:/a/x.md":     `C:\a\x.md`,
+		"file:///c%3A/a/x.md":   `C:\a\x.md`,
+		"file://server/share/x": `\\server\share\x`,
+	} {
+		if got, _ := uriPath(uri); got != want {
+			t.Errorf("uriPath(%q) = %q, want %q", uri, got, want)
+		}
+	}
+}
 
 func TestLifecycle(t *testing.T) {
 	c := start(t, newRepo(t))
@@ -411,7 +445,7 @@ func TestDriftDiagnostics(t *testing.T) {
 	}
 
 	writeFile(t, filepath.Join(root, "src", "lexer.go"), "package lexer\n\n// Lex lexes.\nfunc Lex() {}\n")
-	d := c.diagnostics(uri)
+	d := c.diagnosticsUntil(uri, func(d []diagnostic) bool { return len(d) != 1 || d[0].Code != "line-out-of-range" })
 	if len(d) != 1 || d[0].Code != "line-moved" || d[0].Severity != 3 || !strings.HasPrefix(d[0].Message, "the lines at L3 moved to L4 since the link was committed in ") {
 		t.Fatalf("diagnostics after the code moves = %+v", d)
 	}
@@ -441,14 +475,22 @@ func TestDriftDiagnostics(t *testing.T) {
 	c.change(uri, body, 3)
 	c.diagnostics(uri)
 	writeFile(t, filepath.Join(root, "src", "lexer.go"), "func Lex() {}\n")
-	d = c.diagnostics(uri)
-	if len(d) != 1 || d[0].Code != "line-out-of-range" {
-		t.Fatalf("diagnostics after the file shrinks = %+v", d)
-	}
-	actions = nil
-	c.mustCall("textDocument/codeAction", map[string]any{"textDocument": map[string]any{"uri": uri}, "range": d[0].Range, "context": map[string]any{"diagnostics": []any{}}}, &actions)
-	if len(actions) != 1 || actions[0].Title != "Link to /src/lexer.go#L1 (the lines moved to L1)" {
-		t.Fatalf("actions out of range = %+v", actions)
+	// The empty file of a write in progress is out of range too, with no lines
+	// to find, so wait for a publish of the written file.
+	const want = "Link to /src/lexer.go#L1 (the lines moved to L1)"
+	for {
+		d = c.diagnostics(uri)
+		if len(d) != 1 || d[0].Code != "line-out-of-range" {
+			t.Fatalf("diagnostics after the file shrinks = %+v", d)
+		}
+		actions = nil
+		c.mustCall("textDocument/codeAction", map[string]any{"textDocument": map[string]any{"uri": uri}, "range": d[0].Range, "context": map[string]any{"diagnostics": []any{}}}, &actions)
+		if len(actions) == 1 && actions[0].Title == want {
+			break
+		}
+		if len(actions) != 1 || actions[0].Title != "Link to /src/lexer.go (drop the line anchor)" {
+			t.Fatalf("actions out of range = %+v", actions)
+		}
 	}
 }
 

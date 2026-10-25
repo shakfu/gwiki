@@ -9,6 +9,7 @@ import (
 	"net/textproto"
 	"net/url"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"unicode/utf16"
@@ -109,18 +110,33 @@ type textDocumentPosition struct {
 
 // ---------------------------------------------------------------- URIs
 
-// fileURI is the file:// URI of an absolute path.
+// fileURI is the file:// URI of an absolute path. A Windows drive path gains a
+// leading slash, as in file:///C:/x; without it the drive parses as the host.
 func fileURI(path string) string {
-	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(path)}).String()
+	p := filepath.ToSlash(path)
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	return (&url.URL{Scheme: "file", Path: p}).String()
 }
 
-// uriPath is the path a file:// URI names.
+// uriPath is the path a file:// URI names. On Windows a host names a UNC
+// share, and a drive letter is upper-cased: clients such as VS Code send c:.
 func uriPath(uri string) (string, bool) {
 	u, err := url.Parse(uri)
 	if err != nil || u.Scheme != "file" {
 		return "", false
 	}
-	return filepath.FromSlash(u.Path), true
+	p := u.Path
+	if runtime.GOOS == "windows" {
+		switch {
+		case u.Host != "":
+			p = "//" + u.Host + p
+		case len(p) >= 3 && p[0] == '/' && p[2] == ':':
+			p = strings.ToUpper(p[1:2]) + p[2:]
+		}
+	}
+	return filepath.FromSlash(p), true
 }
 
 // docKey is the key an open document is stored under: its URI as fileURI

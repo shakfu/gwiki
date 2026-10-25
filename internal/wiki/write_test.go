@@ -832,6 +832,9 @@ func TestOpenKeepsACacheLockedByAnotherProcess(t *testing.T) {
 // An edit that keeps the size and restores the mtime, as rsync -t and tar do,
 // is re-indexed.
 func TestRefreshSeesAnEditWithItsMtimeRestored(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no inode change time; see ctime_other.go")
+	}
 	w, root := emptyWiki(t)
 	put(t, w, root, map[string]string{"plan": "# Plan\n\n- [ ] alpha\n"})
 	file := pageFile(root, "plan")
