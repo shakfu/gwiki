@@ -930,6 +930,11 @@ func wikiRemove(a *App, args []string) error {
 }
 
 func wikiTag(a *App, args []string, add bool) error {
+	fs := a.flags("tag")
+	if err := parse(fs, args); err != nil {
+		return err
+	}
+	args = fs.Args()
 	if len(args) < 2 {
 		return fmt.Errorf("%w: name a page and at least one tag; quote a title with spaces", errUsage)
 	}

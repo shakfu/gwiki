@@ -10,6 +10,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Fro
 
 **`gwiki lsp` on Windows could not find the wiki.** `file:///C:/x` parsed to the path `\C:\x`, and a drive path was written as `file://C:/x`, whose drive parses as the host. Drive letters are now upper-cased, so VS Code's `c:` and Go's `C:` name the same buffer, and a URI host names a UNC share.
 
+**Pages with non-ASCII names showed no author or commit date** in the recent list on the home screen and in the browser view, and were not marked uncommitted. git quoted their paths, which then matched no page.
+
+**`gwiki tag` and `untag` took flags as tags**: `gwiki tag p --json` added the tag `--json`. An unknown flag is now a usage error; `--` passes a tag that begins with a dash.
+
+**A panic in a request ended the `lsp` or `mcp` session.** The request now fails with an internal error (-32603), and the stack goes to the log.
+
+**`gwiki lsp` ran malformed requests.** It answered a request with a `null` or object id, or without `"jsonrpc": "2.0"`, as if valid; it now rejects them, as `mcp` does. A second `initialize` opened another cache and leaked the first; it is now an error.
+
+**A moved page lost its mode**, taking 0644, and left its directory behind when that was now empty. A move keeps the mode, and a move or removal deletes the directories it empties.
+
+**Removing one empty page and adding another counted as a rename**, since every empty page has the same hash. The link fixes then offered the new page as where the old one went. Empty pages are no longer matched, and the recorded renames are capped at the latest 1000, like the removals they come from.
+
+**Writes sync their directories**, so a page written, moved or removed survives a crash. Before, only the file's contents were synced. Windows cannot sync a directory and skips it.
+
 ### Changed
 
 **Built with Go 1.26.10**, up from 1.26.6, for 10 standard-library vulnerabilities that `govulncheck` reports in `net/http`, `crypto/x509`, `crypto/tls`, `net/textproto` and `os`.

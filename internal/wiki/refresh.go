@@ -188,6 +188,9 @@ func (w *Wiki) Refresh() (Changes, error) {
 	if _, err := tx.Exec(`DELETE FROM gone WHERE rowid <= (SELECT max(rowid) FROM gone) - 1000`); err != nil {
 		return ch, err
 	}
+	if _, err := tx.Exec(`DELETE FROM renames WHERE rowid <= (SELECT max(rowid) FROM renames) - 1000`); err != nil {
+		return ch, err
+	}
 
 	added := map[string]bool{}
 	for _, id := range ch.Added {
@@ -211,7 +214,9 @@ func (w *Wiki) Refresh() (Changes, error) {
 		if err := wr.insert(p); err != nil {
 			return ch, fmt.Errorf("index %s: %w", p.rel, err)
 		}
-		if !added[id] {
+		// Every empty page has the same hash, so it says nothing of where a
+		// page went.
+		if !added[id] || len(p.src) == 0 {
 			continue
 		}
 		var old string

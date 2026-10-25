@@ -32,8 +32,8 @@ type Target struct {
 // HTML renders a page's body to HTML, with front matter left out. resolve
 // rewrites each link's destination; a nil resolve leaves them as written.
 //
-// Raw HTML in a page is escaped, not passed through: pages come from a
-// repository and an agent as well as from the person reading them.
+// Raw HTML in a page is left out: pages come from a repository and an agent
+// as well as from the person reading them.
 func HTML(src []byte, resolve func(Link) Target) ([]byte, error) {
 	_, bodyStart := splitFront(src)
 	doc := src

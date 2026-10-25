@@ -97,7 +97,7 @@ func (w *Wiki) gitHistory() (map[string]commit, map[string]bool) {
 	defer cancel()
 
 	run := func(args ...string) ([]byte, bool) {
-		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", w.Repo}, args...)...)
+		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", w.Repo, "-c", "core.quotePath=false"}, args...)...)
 		out, err := cmd.Output()
 		return out, err == nil
 	}

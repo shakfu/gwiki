@@ -491,3 +491,26 @@ func TestEveryReplyCarriesAResultOrAnError(t *testing.T) {
 		t.Fatalf("reply = %v, want a result", replies[0])
 	}
 }
+
+// A panic in a tool fails that request; the session goes on.
+func TestPanicIsAnInternalError(t *testing.T) {
+	f := newFixture(t)
+	saved := wikiRegistry
+	t.Cleanup(func() { wikiRegistry = saved })
+	wikiRegistry = append(wikiRegistry[:len(wikiRegistry):len(wikiRegistry)], registered{
+		tool: tool{Name: "boom"},
+		run:  func(*Server, json.RawMessage) (string, error) { panic("boom") },
+	})
+
+	replies := f.exchange(f.frame(1, "tools/call", map[string]any{"name": "boom"}), f.frame(2, "ping", nil))
+	if len(replies) != 2 {
+		t.Fatalf("got %d replies, want 2", len(replies))
+	}
+	e, ok := replies[0]["error"].(map[string]any)
+	if !ok || int(e["code"].(float64)) != codeInternal || !strings.Contains(e["message"].(string), "boom") {
+		t.Fatalf("reply = %v, want -32603 naming the panic", replies[0])
+	}
+	if _, ok := replies[1]["result"]; !ok {
+		t.Fatalf("ping after the panic = %v", replies[1])
+	}
+}

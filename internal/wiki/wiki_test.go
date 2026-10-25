@@ -547,10 +547,13 @@ func TestRecentReadsGit(t *testing.T) {
 		}
 	}
 	git("init", "-q")
-	put(t, w, root, map[string]string{"committed": "# Committed\n", "edited": "# Edited\n"})
+	// git quotes non-ASCII paths by default; a global core.quotePath=false
+	// would hide that.
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	put(t, w, root, map[string]string{"committed": "# Committed\n", "edited": "# Edited\n", "café": "# Café\n"})
 	git("add", ".gwiki/wiki")
 	git("commit", "-q", "-m", "pages")
-	put(t, w, root, map[string]string{"edited": "# Edited again\n", "new": "# New\n"})
+	put(t, w, root, map[string]string{"edited": "# Edited again\n", "new": "# New\n", "naïve": "# Naïve\n"})
 
 	recent, err := w.Recent(10)
 	if err != nil {
@@ -568,6 +571,12 @@ func TestRecentReadsGit(t *testing.T) {
 	}
 	if c := by["new"]; c.Author != "" || !c.Uncommitted {
 		t.Errorf("new = %+v", c)
+	}
+	if c := by["café"]; c.Author != "Ada" || c.Committed.IsZero() || c.Uncommitted {
+		t.Errorf("café = %+v", c)
+	}
+	if c := by["naïve"]; !c.Uncommitted {
+		t.Errorf("naïve = %+v", c)
 	}
 }
 

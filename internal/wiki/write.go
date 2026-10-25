@@ -100,6 +100,9 @@ type fileWrite struct {
 	Page string
 	Base string
 	Data []byte
+
+	// ModeOf is the page whose mode a new page takes; a move sets it.
+	ModeOf string
 }
 
 // Read returns a page's source and its hash.
@@ -221,13 +224,14 @@ func (w *Wiki) commit(writes []fileWrite) (Warnings, error) {
 	}()
 	for i, fw := range writes {
 		if fw.Data != nil {
-			if temps[i], err = stage(root, pageRel(fw.Page), fw.Data); err != nil {
+			if temps[i], err = stage(root, pageRel(fw.Page), fw.Data, fw.ModeOf); err != nil {
 				return Warnings{}, err
 			}
 		}
 	}
 	afterStage()
 	done := 0
+	dirs := map[string]bool{}
 	for i, fw := range writes {
 		// Checked again: an editor outside gwiki may have saved since, and
 		// this leaves it one rename to do so unseen, not the whole batch.
@@ -235,14 +239,20 @@ func (w *Wiki) commit(writes []fileWrite) (Warnings, error) {
 			break
 		}
 		if fw.Data == nil {
-			err = root.Remove(pageRel(fw.Page))
+			if err = root.Remove(pageRel(fw.Page)); err == nil {
+				removeEmptyDirs(root, filepath.Dir(pageRel(fw.Page)))
+			}
 		} else if err = root.Rename(temps[i], pageRel(fw.Page)); err == nil {
 			temps[i] = ""
 		}
 		if err != nil {
 			break
 		}
+		dirs[filepath.Dir(pageRel(fw.Page))] = true
 		done++
+	}
+	for dir := range dirs {
+		syncDir(root, dir)
 	}
 	tx.Rollback()
 
@@ -302,16 +312,37 @@ func writeOrder(fw fileWrite) int {
 	return 1
 }
 
-// stage writes data to a synced temporary file beside rel, with the mode of
-// the page it will replace, and returns its name. The name is hidden, so a
-// scan never reads it.
-func stage(root *os.Root, rel string, data []byte) (string, error) {
+// removeEmptyDirs removes dir and each parent below the pages directory while
+// they are empty, so a move or removal leaves no empty directory behind.
+func removeEmptyDirs(root *os.Root, dir string) {
+	for dir != "." && root.Remove(dir) == nil {
+		syncDir(root, filepath.Dir(dir))
+		dir = filepath.Dir(dir)
+	}
+}
+
+// syncDir syncs a directory so a rename or removal in it survives a crash.
+// It is best effort: the change has landed, and Windows cannot sync a
+// directory.
+func syncDir(root *os.Root, dir string) {
+	if f, err := root.Open(dir); err == nil {
+		f.Sync()
+		f.Close()
+	}
+}
+
+// stage writes data to a synced temporary file beside rel and returns its
+// name. The file takes the mode of the page it replaces, else of the page
+// modeOf, else 0644. The name is hidden, so a scan never reads it.
+func stage(root *os.Root, rel string, data []byte, modeOf string) (string, error) {
 	dir := filepath.Dir(rel)
 	if err := root.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
 	mode := os.FileMode(0o644)
 	if info, err := root.Stat(rel); err == nil {
+		mode = info.Mode().Perm()
+	} else if info, err := root.Stat(pageRel(modeOf)); modeOf != "" && err == nil {
 		mode = info.Mode().Perm()
 	}
 	var f *os.File

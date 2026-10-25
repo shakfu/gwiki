@@ -338,6 +338,44 @@ func TestInitializeWithoutAWiki(t *testing.T) {
 	}
 }
 
+func TestInitializeTwiceIsRejected(t *testing.T) {
+	c := newClient(t)
+	if err := c.call("initialize", map[string]any{"rootUri": fileURI(c.root), "capabilities": map[string]any{}}, nil); err == nil || err.Code != codeInvalidRequest {
+		t.Fatalf("a second initialize = %v", err)
+	}
+}
+
+func TestInvalidEnvelopesAreRejected(t *testing.T) {
+	c := newClient(t)
+	for name, frame := range map[string]map[string]any{
+		"null id":       {"jsonrpc": "2.0", "id": nil, "method": "shutdown"},
+		"object id":     {"jsonrpc": "2.0", "id": map[string]any{"a": 1}, "method": "shutdown"},
+		"wrong version": {"jsonrpc": "1.0", "id": 1, "method": "shutdown"},
+		"no version":    {"id": 1, "method": "shutdown"},
+	} {
+		c.send(frame)
+		m := c.next()
+		var e rpcError
+		json.Unmarshal(m.Error, &e)
+		if m.Method != "" || e.Code != codeInvalidRequest {
+			t.Errorf("%s: reply = %+v", name, m)
+		}
+	}
+	// None of them ran: the server still answers requests.
+	c.mustCall("shutdown", nil, nil)
+}
+
+// A panic in a handler fails that request; the session goes on.
+func TestPanicIsAnInternalError(t *testing.T) {
+	handlers["test/panic"] = func(*Server, json.RawMessage) (any, error) { panic("boom") }
+	t.Cleanup(func() { delete(handlers, "test/panic") })
+	c := newClient(t)
+	if err := c.call("test/panic", nil, nil); err == nil || err.Code != codeInternal || !strings.Contains(err.Message, "boom") {
+		t.Fatalf("panicking request = %v", err)
+	}
+	c.mustCall("shutdown", nil, nil)
+}
+
 func TestBadFrameEndsTheSession(t *testing.T) {
 	c := start(t, newRepo(t))
 	io.WriteString(c.in, "Content-Length: nope\r\n\r\n{}")

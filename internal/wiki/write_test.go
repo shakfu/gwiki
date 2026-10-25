@@ -450,6 +450,46 @@ func TestMoveRewritesAPagesLinksToItself(t *testing.T) {
 	}
 }
 
+// A moved page keeps its mode, and the directory it leaves, now empty, goes.
+func TestMoveKeepsTheModeAndRemovesTheEmptyDirectory(t *testing.T) {
+	w, root := emptyWiki(t)
+	put(t, w, root, map[string]string{"a/b/page": "# Page\n", "keep": "# Keep\n"})
+	if err := os.Chmod(pageFile(root, "a/b/page"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := w.Move("a/b/page", "c/page"); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(pageFile(root, "c/page"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+		t.Errorf("mode = %v, want 0600", info.Mode().Perm())
+	}
+	if _, err := os.Stat(filepath.Join(w.PagesPath(), "a")); !os.IsNotExist(err) {
+		t.Errorf("the empty source directory stays: %v", err)
+	}
+}
+
+// Every empty page has the same hash; an empty page removed and another added
+// is not a rename.
+func TestEmptyPagesAreNotRenames(t *testing.T) {
+	w, root := emptyWiki(t)
+	put(t, w, root, map[string]string{"a": ""})
+	if err := os.Remove(pageFile(root, "a")); err != nil {
+		t.Fatal(err)
+	}
+	write(t, pageFile(root, "b"), "")
+	ch, err := w.Refresh()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := w.Renames(); len(ch.Renamed) != 0 || len(r) != 0 {
+		t.Fatalf("renamed = %v, renames = %v", ch.Renamed, r)
+	}
+}
+
 // A page edited between planning and writing refuses the whole move.
 func TestMoveRefusesWhenALinkingPageChanged(t *testing.T) {
 	w, root := moveFixture(t)
@@ -826,6 +866,28 @@ func TestOpenKeepsACacheLockedByAnotherProcess(t *testing.T) {
 	after, err := os.Stat(w.Cache())
 	if err != nil || !os.SameFile(before, after) {
 		t.Fatalf("the cache file was replaced: %v", err)
+	}
+}
+
+// A read-only transaction does not wait for another process's write lock.
+func TestReadsDoNotTakeTheWriteLock(t *testing.T) {
+	saved := busyTimeout
+	busyTimeout = 50
+	t.Cleanup(func() { busyTimeout = saved })
+	w, _ := emptyWiki(t)
+	other, err := Open(w.Project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+
+	tx, err := w.db.Begin() // _txlock=immediate: takes the write lock
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if _, err := other.readIndex(); err != nil {
+		t.Fatalf("readIndex while another connection writes = %v", err)
 	}
 }
 

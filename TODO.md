@@ -80,31 +80,31 @@ IDs refer to `REVIEW.md` (commit `2cdc3d9`, 2026-09-27), which holds the evidenc
 
 - [ ] P4. Indirect dependencies lag: `golang.org/x/text` v0.3.8, `go-runewidth` v0.0.16.
 
-- [ ] P5. Docs describe behaviour the code lacks: query-refresh claim (`internal/wiki/project.go:1-6`). (`gwiki edit` now keeps the text on a conflict, so its comment holds.)
+- [x] P5. Docs describe behaviour the code lacks: query-refresh claim (`internal/wiki/project.go:1-6`). (`gwiki edit` now keeps the text on a conflict, so its comment holds.) The package comment now says only `Open` refreshes.
 
-- [ ] W12. No `fsync` of the parent directory after rename or remove. `write.go:105,149`
+- [x] W12. No `fsync` of the parent directory after rename or remove. `write.go:105,149`
 
-- [ ] W13. A moved page gets mode 0644; the empty source directory stays. `write.go:126-129`, `move.go:193`
+- [x] W13. A moved page gets mode 0644; the empty source directory stays. `write.go:126-129`, `move.go:193`
 
 - [x] W14. A page deleted between scan and parse fails the whole refresh. `refresh.go:100-104`
 
-- [ ] W15. Rename detection matches on content hash alone; `renames` is never pruned. `refresh.go:151`
+- [x] W15. Rename detection matches on content hash alone; `renames` is never pruned. `refresh.go:151`
 
-- [ ] W16. `git` runs without `core.quotePath=false`; non-ASCII pages get no author or date. `overview.go:110,133`
+- [x] W16. `git` runs without `core.quotePath=false`; non-ASCII pages get no author or date. `overview.go:110,133`
 
 - [ ] W17. The tokenizer splits on combining marks; FTS5 does not. NFD queries find nothing. `search/search.go:78`
 
 - [ ] W18. `FindTask` treats any `text:digits` as `page:line`. `ops.go:331-347`
 
-- [ ] W19. `_txlock=immediate` makes read-only transactions take the write lock. `cache.go:155`, `ops.go:490`
+- [x] W19. `_txlock=immediate` makes read-only transactions take the write lock. `cache.go:155`, `ops.go:490`. Not reproduced: modernc/sqlite applies `_txlock` only to read-write transactions, and `readIndex` is read-only. `TestReadsDoNotTakeTheWriteLock` pins it.
 
 - [ ] W20. A directory link indexed before its `README.md` exists stays `kind=file`. `nested.go:45-63`
 
-- [ ] S7. `"id": null` is answered as a request; `jsonrpc` is not checked. `lsp/server.go:169`
+- [x] S7. `"id": null` is answered as a request; `jsonrpc` is not checked. `lsp/server.go:169`
 
-- [ ] S8. A second `initialize` succeeds and leaks the first cache handle. `lsp/server.go:291`
+- [x] S8. A second `initialize` succeeds and leaks the first cache handle. `lsp/server.go:291`
 
-- [ ] S9. No panic recovery in LSP or MCP. `lsp/server.go:192`, `mcp/mcp.go:192`
+- [x] S9. No panic recovery in LSP or MCP. `lsp/server.go:192`, `mcp/mcp.go:192`
 
 - [ ] S10. Web server sets only `ReadHeaderTimeout`; no `IdleTimeout`, no graceful shutdown. `webwiki/server.go:205`
 
@@ -118,7 +118,7 @@ IDs refer to `REVIEW.md` (commit `2cdc3d9`, 2026-09-27), which holds the evidenc
 
 - [ ] S15. A malformed `%` escape in the hash throws outside the `try`. `webwiki/assets/app.js:161-169`
 
-- [ ] S16. Comment says raw HTML is escaped; it is omitted. `markdown/html.go:32`
+- [x] S16. Comment says raw HTML is escaped; it is omitted. `markdown/html.go:32`
 
 - [ ] T15. `:s` replaces on the matched substring, so `\B` and similar assertions fail. `vim/ex.go:295`
 
@@ -134,7 +134,7 @@ IDs refer to `REVIEW.md` (commit `2cdc3d9`, 2026-09-27), which holds the evidenc
 
 - [x] T21. A restored stale draft takes the current hash, so `:w` overwrites the newer page. `tui/wiki_edit.go:108-109`
 
-- [ ] T22. `gwiki tag other --json` adds the tag `--json`. `cli/wiki.go:862-875`
+- [x] T22. `gwiki tag other --json` adds the tag `--json`. `cli/wiki.go:862-875`
 
 - [ ] T23. `orphans` and `tasks` ignore extra arguments; `search -n -5` is accepted. `cli/wiki.go:555-560`
 

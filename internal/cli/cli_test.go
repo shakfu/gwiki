@@ -68,6 +68,7 @@ func TestUsageErrorsExitTwo(t *testing.T) {
 		{"new"},
 		{"show"},
 		{"tag", "index"},
+		{"tag", "index", "other", "--json"},
 		{"mv", "index"},
 	} {
 		_, stderr, code := f.run(args...)

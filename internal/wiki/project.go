@@ -1,8 +1,9 @@
 // Package wiki is a project's markdown wiki: pages under .gwiki/wiki, and a
 // derived SQLite cache of their titles, headings, links, tags and tasks.
 //
-// The pages are the truth. The cache is rebuilt from them whenever it is
-// missing, stale or unreadable, and every query brings it up to date first.
+// The pages are the truth. The cache is rebuilt from them when it is missing
+// or unreadable, and Open brings it up to date. Queries do not: a caller that
+// stays open calls Refresh.
 // See docs/dev/wiki-design.md.
 package wiki
 
