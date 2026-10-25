@@ -26,6 +26,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Fro
 
 ### Changed
 
+**The build workflow runs by hand without a tag**, to try a release build before tagging. It builds the chosen branch as version `dev-<commit>` and uploads the archives as a workflow artifact, releasing nothing. With a tag it releases that tag, as before.
+
 **Built with Go 1.26.10**, up from 1.26.6, for 10 standard-library vulnerabilities that `govulncheck` reports in `net/http`, `crypto/x509`, `crypto/tls`, `net/textproto` and `os`.
 
 **The test for a same-size edit with its mtime restored skips on Windows.** Windows has no inode change time, so `rsync -t` and `tar` edits go unnoticed there. Reading NTFS ChangeTime would cost a file open per page per refresh.

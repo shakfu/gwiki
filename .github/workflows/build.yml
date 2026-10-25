@@ -1,15 +1,18 @@
 name: build
 
 # A version tag, as the project tags releases: 0.5.0, without a v. Run by
-# hand, it releases an existing tag.
+# hand with a tag, it releases that existing tag; without one, it builds the
+# chosen branch as version dev-<commit> and uploads the archives as a workflow
+# artifact, releasing nothing.
 on:
   push:
     tags: ['[0-9]+.[0-9]+.[0-9]+']
   workflow_dispatch:
     inputs:
       tag:
-        description: An existing version tag, such as 0.5.0
-        required: true
+        description: An existing version tag, such as 0.5.0, to release. Empty to build the branch without releasing.
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -18,17 +21,23 @@ jobs:
   release:
     runs-on: ubuntu-latest
     env:
-      VERSION: ${{ inputs.tag || github.ref_name }}
+      # Empty for a build run by hand without a tag.
+      TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
     steps:
       - name: Check the version
         run: |
-          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::$VERSION is not a version tag"; exit 1; }
+          if [ -z "$TAG" ]; then
+            echo "VERSION=dev-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          [[ "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::$TAG is not a version tag"; exit 1; }
+          echo "VERSION=$TAG" >> "$GITHUB_ENV"
 
       # The whole history, so the release notes can come from the workflow's
       # own commit when that is not the tag.
       - uses: actions/checkout@v7
         with:
-          ref: refs/tags/${{ env.VERSION }}
+          ref: ${{ env.TAG && format('refs/tags/{0}', env.TAG) || '' }}
           fetch-depth: 0
       - uses: actions/setup-go@v7
         with:
@@ -38,6 +47,7 @@ jobs:
         run: make check
 
       - name: Warn on a version mismatch
+        if: env.TAG != ''
         run: |
           grep -q "var version = \"$VERSION\"" cmd/gwiki/main.go ||
             echo "::warning file=cmd/gwiki/main.go::version is not $VERSION; go install builds report the old one"
@@ -68,7 +78,15 @@ jobs:
           EOF
           (cd dist && sha256sum -- * > SHA256SUMS)
 
+      - name: Upload the build
+        if: env.TAG == ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: gwiki-${{ env.VERSION }}
+          path: dist/
+
       - name: Release
+        if: env.TAG != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
