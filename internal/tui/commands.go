@@ -119,47 +119,39 @@ func (m *WikiModel) editCommand(name, arg string) (bool, error) { return m.runCo
 // startCommand opens the ':' line outside the buffer.
 func (m *WikiModel) startCommand() {
 	m.askWiki(":", "", func(line string) error {
-		m.status = ""
+		m.setStatus("")
 		return m.commandLine(line)
 	})
 }
 
 // commandLine runs a ':' line typed outside the buffer: a wiki command, or
-// vim's :w, :q, :wq and :x on the open page.
+// :w, :q, :wq and :x, which the open page's editor runs as if typed in it.
 func (m *WikiModel) commandLine(line string) error {
 	name, arg, _ := strings.Cut(strings.TrimSpace(line), " ")
 	arg = strings.TrimSpace(arg)
-	force := strings.HasSuffix(name, "!")
-	name = strings.TrimSuffix(name, "!")
-	switch name {
+	switch strings.TrimSuffix(name, "!") {
 	case "":
 		return nil
-	case "q", "quit":
+	case "q", "quit", "w", "write", "wq", "x", "xit":
 		if m.edit == nil {
-			m.quitting = true
-			return nil
-		}
-		return m.editQuit(force)
-	case "w", "write", "wq", "x", "xit":
-		if m.edit == nil {
-			return errors.New(":" + name + " needs an open page")
-		}
-		var warning string
-		if m.edit.ed.Dirty || force {
-			var err error
-			if warning, err = m.editSave(force); err != nil {
-				return err
+			if strings.HasPrefix(name, "q") {
+				m.quitting = true
+				return nil
 			}
-			m.edit.ed.Dirty = false
+			return errors.New(":" + strings.TrimSuffix(name, "!") + " needs an open page")
 		}
-		if name == "w" || name == "write" {
-			m.setStatus("written " + m.edit.page)
-			if warning != "" {
-				m.status, m.statusErr = m.status+"; warning: "+warning, true
-			}
-			return nil
+		ed := m.edit.ed
+		ed.Ex(line)
+		msg, failed := ed.Message, ed.Err
+		// The message is shown here, not again in the buffer.
+		ed.Message, ed.Err = "", false
+		if failed {
+			return errors.New(msg)
 		}
-		return m.editQuit(false)
+		if msg != "" {
+			m.setStatus(msg)
+		}
+		return nil
 	}
 	if ok, err := m.runCommand(name, arg); ok {
 		return err

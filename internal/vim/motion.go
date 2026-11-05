@@ -103,6 +103,10 @@ func (e *Editor) motion(keys []string, count int, forOp bool) (Pos, bool, bool, 
 		if len(keys) < 2 {
 			return cur, false, false, needMore
 		}
+		if _, ok := charKey(keys[1]); !ok {
+			// esc and other named keys cancel, as in vim.
+			return cur, false, false, bad
+		}
 		e.lastFind = [2]string{head, keys[1]}
 		p, ok := e.find(head, keys[1], n, false)
 		if !ok {
@@ -456,7 +460,7 @@ func (e *Editor) paragraph(forward bool, n int) Pos {
 
 // find is f, F, t and T on the cursor's line.
 func (e *Editor) find(cmd, target string, n int, repeat bool) (Pos, bool) {
-	r := firstRune(target)
+	r, _ := charKey(target)
 	line := e.Buf.Line(e.Cursor.Line)
 	col := e.Cursor.Col
 	forward := cmd == "f" || cmd == "t"

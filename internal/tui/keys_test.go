@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -173,8 +175,41 @@ func TestWikiCommandLine(t *testing.T) {
 	if f.m.edit.ed.Dirty || !strings.HasPrefix(f.source("index"), " Home") {
 		t.Fatalf(":w from the tree: %q", f.source("index"))
 	}
-	f.press(":", "q", "enter")
+	if f.m.status != "written" || f.m.edit.ed.Message != "" {
+		t.Fatalf(":w from the tree: status %q, buffer message %q", f.m.status, f.m.edit.ed.Message)
+	}
+	// The tree's :q follows the buffer's rules: :q! discards changes.
+	f.m.screen, f.m.focus = screenRead, focusContent
+	f.press("x", "tab", "tab")
+	f.press(":", "q!", "enter")
 	if !f.m.quitting {
-		t.Fatal(":q did not quit")
+		t.Fatal(":q! did not quit")
+	}
+}
+
+// From the tree, :w writes a clean page and :x quits without writing, as in
+// vim.
+func TestTreeWriteAndXOnACleanPage(t *testing.T) {
+	f := newWikiFixture(t)
+	f.press("enter")
+	if f.m.edit == nil {
+		t.Fatal("no page open")
+	}
+	before := f.source("index")
+	if err := os.Remove(filepath.Join(f.root, ".gwiki", "wiki", "index.md")); err != nil {
+		t.Fatal(err)
+	}
+	f.m.screen, f.m.focus = screenRead, focusTree
+	// :w writes even a clean buffer, so it reports the removal, not "written".
+	f.press(":", "w", "enter")
+	if !f.m.statusErr || !strings.Contains(f.m.status, "removed on disk") {
+		t.Fatalf(":w on a clean, removed page: %q", f.m.status)
+	}
+	f.press(":", "x", "enter")
+	if !f.m.quitting || f.m.statusErr {
+		t.Fatalf(":x on a clean page: quitting %v, status %q", f.m.quitting, f.m.status)
+	}
+	if _, err := os.Stat(filepath.Join(f.root, ".gwiki", "wiki", "index.md")); err == nil {
+		t.Fatalf(":x wrote a clean page back:\n%s", before)
 	}
 }

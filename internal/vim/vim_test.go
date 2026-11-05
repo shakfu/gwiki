@@ -139,6 +139,17 @@ func TestOperators(t *testing.T) {
 		{name: "3J", text: "@one\ntwo\nthree\n", keys: "3J", want: "one two three\n"},
 		{name: "r", text: "@abc\n", keys: "rx", want: "xbc\n"},
 		{name: "3r", text: "@abc\n", keys: "3rx", want: "xxx\n"},
+		{name: "r tab", text: "@abc\n", keys: "r<tab>", want: "\tbc\n"},
+		{name: "r space", text: "@abc\n", keys: "r<space>", want: " bc\n"},
+		{name: "r enter", text: "a@bc\n", keys: "r<enter>", want: "a\nc\n", at: Pos{1, 0}},
+		{name: "3r enter is one line break", text: "@abcd\n", keys: "3r<enter>", want: "\nd\n", at: Pos{1, 0}},
+		{name: "r esc cancels", text: "@abc\n", keys: "r<esc>x", want: "bc\n"},
+		{name: "r up cancels", text: "@abc\n", keys: "r<up>", want: "abc\n"},
+		{name: "r tab repeats", text: "@abc\n", keys: "r<tab>l.", want: "\t\tc\n"},
+		{name: "f tab", text: "@a\tb t\n", keys: "f<tab>x", want: "ab t\n"},
+		{name: "t tab", text: "@ab\tc\n", keys: "dt<tab>", want: "\tc\n"},
+		{name: "f esc cancels", text: "@abc\n", keys: "f<esc>x", want: "bc\n"},
+		{name: "df esc deletes nothing", text: "@abc\n", keys: "df<esc>", want: "abc\n"},
 		{name: "tilde", text: "@abc\n", keys: "2~", want: "ABc\n", at: Pos{0, 2}},
 		{name: "shift right", text: "@one\ntwo\n", keys: ">>", want: "  one\ntwo\n"},
 		{name: "shift left", text: "    @one\n", keys: "<<", want: "  one\n"},
@@ -318,6 +329,29 @@ func TestHooks(t *testing.T) {
 	e.Keys(keys(":preview<enter>")...)
 	if e.Err {
 		t.Errorf("preview: %q", e.Message)
+	}
+
+	// :x writes only a buffer with changes; :wq always writes.
+	saved, quit = false, false
+	e = New("text\n")
+	e.Hooks = Hooks{
+		Save: func(force bool) (string, error) { saved = true; return "", nil },
+		Quit: func(force bool) error { quit = true; return nil },
+	}
+	e.Ex("x")
+	if saved || !quit {
+		t.Errorf(":x on a clean buffer: saved %v, quit %v", saved, quit)
+	}
+	saved, quit = false, false
+	e.Ex("wq")
+	if !saved || !quit {
+		t.Errorf(":wq on a clean buffer: saved %v, quit %v", saved, quit)
+	}
+	saved, quit = false, false
+	e.Keys(keys("ix<esc>")...)
+	e.Ex("x")
+	if !saved || !quit || e.Dirty {
+		t.Errorf(":x with changes: saved %v, quit %v, dirty %v", saved, quit, e.Dirty)
 	}
 
 	// Without a hook the command says so rather than doing nothing.

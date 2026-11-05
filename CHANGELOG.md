@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Fro
 
 ## [Unreleased]
 
+### Fixed
+
+**`r`, `f`, `F`, `t` and `T` took a named key's first letter.** `r<tab>` wrote `t` and `f<tab>` searched for `t`. Tab and space now stand for their characters; `esc` and other named keys cancel. `3r<enter>` wrote three line breaks; as in vim it now replaces the three characters with one.
+
+**`:w`, `:q`, `:wq` and `:x` typed outside the buffer followed their own rules.** From the tree or a list, `:w` skipped a buffer without changes and reported "written" even when the page had been removed on disk, and `:wq!` ignored the `!`. These commands now run in the page's editor, as if typed there. As in vim, `:w` and `:wq` always write and `:x` writes only a buffer with changes.
+
 ## [0.6.1]
 
 ### Fixed

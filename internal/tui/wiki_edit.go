@@ -194,11 +194,9 @@ func (m *WikiModel) editSave(force bool) (string, error) {
 	return warn.String(), nil
 }
 
-// editQuit leaves gwiki, as :q leaves vim.
+// editQuit leaves gwiki, as :q leaves vim. The editor has already refused
+// a quit that would lose changes; with force it discards them.
 func (m *WikiModel) editQuit(force bool) error {
-	if m.edit.ed.Dirty && !force {
-		return errors.New("the page has unsaved changes; :w writes them, :q! discards them")
-	}
 	if m.edit.ed.Dirty {
 		m.dropDraft()
 	}

@@ -110,6 +110,13 @@ type exRange struct {
 	given    bool
 }
 
+// Ex runs a ':' command line, as if typed after ':' in the buffer. The
+// result is in Message and Err.
+func (e *Editor) Ex(line string) {
+	e.Message, e.Err = "", false
+	e.exCommand(line)
+}
+
 // exCommand runs one ':' command.
 func (e *Editor) exCommand(text string) {
 	text = strings.TrimSpace(text)
@@ -138,8 +145,15 @@ func (e *Editor) exCommand(text string) {
 	switch name {
 	case "w", "write":
 		e.save(force, false)
-	case "wq", "x", "xit":
+	case "wq":
 		e.save(force, true)
+	case "x", "xit":
+		// As in vim, :x writes only a buffer with changes.
+		if e.Dirty || force {
+			e.save(force, true)
+		} else {
+			e.quit(force)
+		}
 	case "q", "quit":
 		e.quit(force)
 	case "e", "edit":
