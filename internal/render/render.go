@@ -19,6 +19,7 @@ import (
 
 	"github.com/shakfu/gwiki/internal/display"
 	"github.com/shakfu/gwiki/internal/markdown"
+	"github.com/shakfu/gwiki/internal/syntax"
 )
 
 // Styles are the looks of each element.
@@ -34,6 +35,9 @@ type Styles struct {
 	Link     lipgloss.Style
 	Broken   lipgloss.Style
 	Selected lipgloss.Style
+
+	// Syntax colours code by class; a class left out is drawn as Code.
+	Syntax map[syntax.Class]lipgloss.Style
 }
 
 // Link is a link as drawn, in reading order.
@@ -58,6 +62,9 @@ type Doc struct {
 
 	// Headings maps each heading's slug to its output line.
 	Headings map[string]int
+
+	// Warnings are code blocks left partly or wholly plain, by source line.
+	Warnings []string
 }
 
 // Options control a rendering.
@@ -179,11 +186,30 @@ func (r *renderer) block(n ast.Node, m *margin) {
 	case *ast.CodeBlock, *ast.FencedCodeBlock:
 		code := &margin{parent: m, first: "  ", rest: "  "}
 		lines := n.Lines()
-		for i := 0; i < lines.Len(); i++ {
+		texts := make([]string, lines.Len())
+		for i := range texts {
 			seg := lines.At(i)
-			text := expandTabs(strings.TrimRight(string(seg.Value(r.doc)), "\n"))
+			texts[i] = expandTabs(strings.TrimRight(string(seg.Value(r.doc)), "\n"))
+		}
+		var spans [][]syntax.Span
+		if f, ok := n.(*ast.FencedCodeBlock); ok && len(texts) > 0 {
+			var err error
+			spans, err = syntax.Highlight(string(f.Language(r.doc)), strings.Join(texts, "\n"))
+			if err != nil {
+				r.out.Warnings = append(r.out.Warnings, fmt.Sprintf("code at line %d: %v", r.lineOf(lines.At(0).Start), err))
+			}
+		}
+		for i, text := range texts {
+			var line []syntax.Span
+			if i < len(spans) {
+				line = spans[i]
+			}
+			// Cut the plain text, so a wrapped token keeps its colour.
+			from := 0
 			for _, part := range cut(display.Line(text), max(1, r.width-code.width())) {
-				r.emit(code, r.o.Styles.Code.Render(part), r.lineOf(seg.Start))
+				n := utf8.RuneCountInString(part)
+				r.emit(code, r.styleCode([]rune(part), from, line), r.lineOf(lines.At(i).Start))
+				from += n
 			}
 		}
 
@@ -614,6 +640,43 @@ func lineStarts(src []byte) []int {
 }
 
 // cut splits a line of code into parts no wider than width.
+// styleCode draws part of a code line, starting at rune column from, in the
+// classes of spans and Code elsewhere.
+func (r *renderer) styleCode(part []rune, from int, spans []syntax.Span) string {
+	var b strings.Builder
+	style := func(col int) lipgloss.Style {
+		for _, s := range spans {
+			if col >= s.From && col < s.To {
+				if st, ok := r.o.Styles.Syntax[s.Class]; ok {
+					return st
+				}
+			}
+		}
+		return r.o.Styles.Code
+	}
+	for i := 0; i < len(part); {
+		st := style(from + i)
+		j := i + 1
+		for j < len(part) && sameSpan(spans, from+i, from+j) {
+			j++
+		}
+		b.WriteString(st.Render(string(part[i:j])))
+		i = j
+	}
+	return b.String()
+}
+
+// sameSpan reports whether columns a and b fall in the same span, or both in
+// none.
+func sameSpan(spans []syntax.Span, a, b int) bool {
+	for _, s := range spans {
+		if (a >= s.From && a < s.To) != (b >= s.From && b < s.To) {
+			return false
+		}
+	}
+	return true
+}
+
 func cut(s string, width int) []string {
 	var out []string
 	for ansi.StringWidth(s) > width {

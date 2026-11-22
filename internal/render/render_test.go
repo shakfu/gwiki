@@ -6,6 +6,8 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/shakfu/gwiki/internal/syntax"
 )
 
 // marked styles make selection and breakage visible without colour.
@@ -150,5 +152,31 @@ func BenchmarkRender(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		Render(src, o)
+	}
+}
+
+// Fenced code is drawn in its classes' styles, and a token cut by wrapping
+// keeps its style on both rows.
+func TestCodeHighlight(t *testing.T) {
+	s := marked()
+	s.Syntax = map[syntax.Class]lipgloss.Style{
+		syntax.Keyword: lipgloss.NewStyle().Transform(strings.ToUpper),
+		syntax.String:  lipgloss.NewStyle().Transform(func(t string) string { return strings.Repeat("*", len([]rune(t))) }),
+	}
+	d := Render([]byte("```go\nreturn \"abcdefgh\"\n```\n"), Options{Width: 12, Styles: s, Selected: -1})
+	got := strings.Join(d.Lines, "\n")
+	if want := "  RETURN ***\n  *******"; got != want {
+		t.Fatalf("got\n%s\nwant\n%s", got, want)
+	}
+	if len(d.Warnings) != 0 {
+		t.Fatalf("warnings %v", d.Warnings)
+	}
+}
+
+func TestCodeTooLargeWarns(t *testing.T) {
+	src := "intro\n\n```go\n" + strings.Repeat("x = 1\n", 12000) + "```\n"
+	d := render(t, src, 40)
+	if len(d.Warnings) != 1 || !strings.Contains(d.Warnings[0], "code at line 4") {
+		t.Fatalf("warnings %v", d.Warnings)
 	}
 }

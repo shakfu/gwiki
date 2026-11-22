@@ -308,14 +308,10 @@ func (e *Editor) run(keys []string, count int, reg rune) result {
 		}
 		return done
 	case "ctrl+e":
-		e.Top = min(e.Top+atLeast(count), max(0, e.Buf.Lines()-1))
-		e.Cursor.Line = max(e.Cursor.Line, e.Top)
-		e.Cursor = e.Buf.clamp(e.Cursor, false)
+		e.Scroll(atLeast(count))
 		return done
 	case "ctrl+y":
-		e.Top = max(0, e.Top-atLeast(count))
-		e.Cursor.Line = min(e.Cursor.Line, e.bottom())
-		e.Cursor = e.Buf.clamp(e.Cursor, false)
+		e.Scroll(-atLeast(count))
 		return done
 
 	}

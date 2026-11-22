@@ -9,6 +9,7 @@ import (
 	"github.com/muesli/termenv"
 
 	"github.com/shakfu/gwiki/internal/render"
+	"github.com/shakfu/gwiki/internal/syntax"
 )
 
 // The palette follows the browser view's (internal/webwiki/assets/app.css) in
@@ -54,6 +55,9 @@ var (
 	styleEditEmph    lipgloss.Style
 	styleEditStrong  lipgloss.Style
 	styleMatch       lipgloss.Style
+
+	// styleSyntax colours code by class, in the buffer and the preview.
+	styleSyntax map[syntax.Class]lipgloss.Style
 
 	// readerStyles draw a page in the reader and the editor's preview.
 	readerStyles render.Styles
@@ -122,6 +126,17 @@ func setTheme(r *lipgloss.Renderer) {
 	styleEditEmph = s().Italic(true)
 	styleEditStrong = styleBold
 	styleMatch = bg(colourMatch)
+	styleSyntax = map[syntax.Class]lipgloss.Style{
+		syntax.Keyword:  fg(colourTag),
+		syntax.Type:     fg(colourAccent),
+		syntax.Function: fg(colourLink),
+		syntax.String:   fg(colourOK),
+		syntax.Number:   fg(colourWarn),
+		syntax.Comment:  styleDim.Italic(true),
+	}
+	if !colour {
+		styleSyntax[syntax.Keyword] = styleBold
+	}
 
 	readerStyles = render.Styles{
 		Heading: [3]lipgloss.Style{
@@ -140,6 +155,7 @@ func setTheme(r *lipgloss.Renderer) {
 		Link:     styleEditLink,
 		Broken:   styleEditBroken,
 		Selected: s().Reverse(true),
+		Syntax:   styleSyntax,
 	}
 }
 

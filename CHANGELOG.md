@@ -6,7 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Fro
 
 ## [Unreleased]
 
+### Added
+
+**Fenced code is highlighted** in the buffer and the preview, by chroma (`internal/syntax`), in the theme's colours. Chroma adds 3.6 MB to the binary; a hand-written lexer for a few languages was the smaller choice. Page text is untrusted and chroma's regexps backtrack, each match bounded only by a 250 ms timeout, so a block over 64 KiB is left plain and lexing stops after 50 ms. Either shows a warning on the status line.
+
+**The mouse works in the interface.** A click opens a tree row, list row, backlink or overview tab, and folds a directory at its marker. A click in the page places the cursor, and a second click on the same link follows it, so one click shows where a link goes. A click on a repair only selects it, since applying one writes. The wheel scrolls the pane under the pointer. Mouse capture disables the terminal's own text selection, so `:mouse` toggles it. Click targets are recorded as each frame is drawn, so hit testing uses the layout on screen.
+
 ### Fixed
+
+**Up on a `:` or `/` line reaches past the last two lines.** Recall returned the newest line unlike the current one, so repeated presses alternated between the last two. Each page also had its own history, lost on opening another. One history is now shared by every page and the `:` prompt outside the buffer, and recall matches what was typed before it began, as vim's does.
 
 **Four `internal/wiki` tests added in 0.4.1 failed.** The changes they test were incomplete:
 

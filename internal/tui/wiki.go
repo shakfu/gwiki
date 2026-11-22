@@ -88,6 +88,11 @@ type WikiModel struct {
 	input  input
 	prompt *wikiPrompt
 
+	// commands is the ':' and search lines entered, shared by every page's
+	// buffer and the ':' prompt; recall walks it from the prompt.
+	commands *vim.History
+	recall   vim.Recall
+
 	pages      []wiki.PageInfo
 	rows       []treeRow
 	collapsed  map[string]bool
@@ -129,6 +134,10 @@ type WikiModel struct {
 
 	// after is a command queued by a key for Update to return.
 	after tea.Cmd
+
+	// zones are the last frame's mouse targets; mouseOn is mouse capture.
+	zones   []zone
+	mouseOn bool
 }
 
 // reading is what the index knows about the open page.
@@ -140,6 +149,7 @@ type reading struct {
 	linkers   []linker
 
 	backCursor int
+	panelStart int // the first linker the panel drew
 }
 
 // linker is a page linking to the open one: the line of its first link, and
@@ -172,6 +182,8 @@ func NewWiki(w *wiki.Wiki) (*WikiModel, error) {
 		width:     80,
 		height:    24,
 		collapsed: map[string]bool{},
+		commands:  &vim.History{},
+		mouseOn:   true,
 		getenv:    os.Getenv,
 		now:       time.Now,
 		exec:      tea.ExecProcess,
@@ -204,7 +216,7 @@ func RunWiki(w *wiki.Wiki) error {
 	// Ask the terminal for its background now: once the program runs, the
 	// reply would arrive as keystrokes.
 	term.HasDarkBackground()
-	if _, err := tea.NewProgram(m, tea.WithAltScreen()).Run(); err != nil {
+	if _, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run(); err != nil {
 		return fmt.Errorf("interface: %w", err)
 	}
 	return nil
@@ -530,6 +542,11 @@ func (m *WikiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.quitting {
 			return m, tea.Quit
 		}
+		return m, cmd
+	case tea.MouseMsg:
+		m.mouse(msg)
+		cmd := m.after
+		m.after = nil
 		return m, cmd
 	case pollMsg:
 		m.pollDisk()
@@ -1027,20 +1044,7 @@ func (m *WikiModel) keyFind(msg tea.KeyMsg) {
 		m.screen = m.base
 		return
 	case "enter":
-		var page string
-		switch {
-		case m.screen == screenSearch && m.cursor < len(m.hits):
-			page = m.hits[m.cursor].Path
-		case m.screen == screenOpen && m.cursor < len(m.matches):
-			page = m.matches[m.cursor].Path
-		default:
-			return
-		}
-		if err := m.open(page); err != nil {
-			m.setError(err)
-			return
-		}
-		m.screen, m.focus = screenRead, focusContent
+		m.findEnter()
 		return
 	case "down", "ctrl+n":
 		m.cursor = min(m.cursor+1, max(0, m.listLen()-1))
@@ -1058,6 +1062,24 @@ func (m *WikiModel) keyFind(msg tea.KeyMsg) {
 	} else {
 		m.findPages()
 	}
+}
+
+// findEnter opens the selected search hit or quick-open match.
+func (m *WikiModel) findEnter() {
+	var page string
+	switch {
+	case m.screen == screenSearch && m.cursor < len(m.hits):
+		page = m.hits[m.cursor].Path
+	case m.screen == screenOpen && m.cursor < len(m.matches):
+		page = m.matches[m.cursor].Path
+	default:
+		return
+	}
+	if err := m.open(page); err != nil {
+		m.setError(err)
+		return
+	}
+	m.screen, m.focus = screenRead, focusContent
 }
 
 // editLine applies a key to a line of input and reports whether the text
@@ -1324,30 +1346,39 @@ func (m *WikiModel) afterWrite() {
 // ---------------------------------------------------------------- writes
 
 // wikiPrompt is a question awaiting a typed answer. An error from action shows
-// on the status line.
+// on the status line. A prompt with a history kind recalls and records lines.
 type wikiPrompt struct {
-	label  string
-	action func(answer string) error
+	label   string
+	history rune
+	action  func(answer string) error
 }
 
 func (m *WikiModel) askWiki(label, initial string, action func(answer string) error) {
 	m.prompt = &wikiPrompt{label: label, action: action}
 	m.input.set(initial)
+	m.recall = vim.Recall{}
 }
 
 func (m *WikiModel) keyPrompt(msg tea.KeyMsg) {
-	switch msg.Type {
-	case tea.KeyEsc:
+	p := m.prompt
+	switch {
+	case msg.Type == tea.KeyEsc:
 		m.prompt = nil
 		m.setStatus("cancelled")
-	case tea.KeyEnter:
-		p := m.prompt
+	case msg.Type == tea.KeyEnter:
 		m.prompt = nil
+		if p.history != 0 {
+			m.commands.Add(p.history, m.input.String())
+		}
 		if err := p.action(m.input.String()); err != nil {
 			m.setError(err)
 		}
+	case p.history != 0 && (msg.Type == tea.KeyUp || msg.Type == tea.KeyDown):
+		m.input.set(m.recall.Step(m.commands, p.history, m.input.String(), msg.Type == tea.KeyUp))
 	default:
-		editLine(&m.input, msg)
+		if editLine(&m.input, msg) {
+			m.recall = vim.Recall{}
+		}
 	}
 }
 

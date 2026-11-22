@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/shakfu/gwiki/internal/markdown"
+	"github.com/shakfu/gwiki/internal/syntax"
 	"github.com/shakfu/gwiki/internal/vim"
 	"github.com/shakfu/gwiki/internal/wiki"
 )
@@ -49,6 +50,15 @@ type editing struct {
 	// links are the buffer's links when it held linksText; see bufferLinks.
 	links     []wiki.Link
 	linksText string
+
+	// code is the classed spans of each fenced line when it held codeText;
+	// see codeSpans. warned is the last code warning shown.
+	// rows are the buffer rows last drawn, for clicks.
+	rows []bufRow
+
+	code     map[int][]syntax.Span
+	codeText string
+	warned   string
 }
 
 // draftsDir holds a buffer's autosaved text, so an interrupted edit survives.
@@ -65,6 +75,7 @@ func draftName(page string) string {
 func (m *WikiModel) openBuffer(page string, src []byte, hash string) {
 	ed := vim.New(string(src))
 	ed.Width, ed.Height = m.bufferWidth(), m.contentHeight()
+	ed.History = m.commands
 	m.edit = &editing{ed: ed, page: page, base: hash}
 	ed.Hooks = vim.Hooks{
 		Save:   m.editSave,

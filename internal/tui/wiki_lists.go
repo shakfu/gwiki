@@ -26,6 +26,13 @@ func (m *WikiModel) listWindow(n, rowsPer, reserved int) (int, int) {
 	return m.scroll, min(n, m.scroll+visible)
 }
 
+// listZone makes rows rows of a list screen clickable, rowsPer lines each,
+// from body line top, showing items from start.
+func (m *WikiModel) listZone(top, rows, rowsPer, start int) {
+	m.addZone(0, 1+top, m.width, rows*rowsPer, func(_, y int) { m.clickList(start + y/rowsPer) },
+		func(by int) { m.listMove(func(pos, _ int) int { return pos + by }) })
+}
+
 func (m *WikiModel) row(i int, text string) string {
 	text = truncate(text, m.width)
 	if i == m.cursor {
@@ -39,6 +46,7 @@ func (m *WikiModel) viewTable(t *table, above []string) []string {
 	t.layout(m.width)
 	out := append(above, t.header())
 	start, end := m.listWindow(len(t.rows), 1, len(out))
+	m.listZone(len(out), end-start, 1, start)
 	for i := start; i < end; i++ {
 		out = append(out, m.row(i, t.draw(t.rows[i])))
 	}
@@ -95,6 +103,7 @@ func (m *WikiModel) viewHits() []string {
 	}
 	t.layout(m.width)
 	start, end := m.listWindow(len(m.hits), 2, 0)
+	m.listZone(0, end-start, 2, start)
 	var out []string
 	for i := start; i < end; i++ {
 		out = append(out, m.row(i, t.draw(t.rows[i])), "   "+snippet(m.hits[i].Snippet, m.width-3))

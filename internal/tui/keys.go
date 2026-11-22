@@ -302,5 +302,6 @@ func (m *WikiModel) keyHelp(msg tea.KeyMsg) {
 func (m *WikiModel) viewHelp() []string {
 	lines := m.helpLines()
 	m.helpScroll = max(0, min(m.helpScroll, len(lines)-m.helpHeight()))
+	m.addZone(0, 1, m.width, m.helpHeight(), nil, func(by int) { m.helpScroll = max(0, m.helpScroll+by) })
 	return lines[m.helpScroll:min(len(lines), m.helpScroll+m.helpHeight())]
 }

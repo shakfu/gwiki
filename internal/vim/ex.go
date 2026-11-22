@@ -11,14 +11,14 @@ func (e *Editor) commandKey(k string) {
 	switch k {
 	case "esc", "ctrl+[":
 		e.Mode, e.cmdline, e.waiting = Normal, nil, pendingOp{}
+		e.recall = Recall{}
 		e.Message = ""
 	case "enter":
 		text := string(e.cmdline)
 		kind := e.cmdKind
 		e.Mode, e.cmdline = Normal, nil
-		if text != "" {
-			e.history = append(e.history, string(kind)+text)
-		}
+		e.recall = Recall{}
+		e.History.Add(kind, text)
 		if kind == ':' {
 			e.exCommand(text)
 			return
@@ -40,7 +40,8 @@ func (e *Editor) commandKey(k string) {
 			e.cmdline = nil
 		}
 	case "up", "down":
-		e.recall(k == "up")
+		e.cmdline = []rune(e.recall.Step(e.History, e.cmdKind, string(e.cmdline), k == "up"))
+		return
 	case "space":
 		e.cmdline = append(e.cmdline, ' ')
 	case "tab":
@@ -49,22 +50,8 @@ func (e *Editor) commandKey(k string) {
 			e.cmdline = append(e.cmdline, firstRune(k))
 		}
 	}
-}
-
-// recall walks the command history for lines of the same kind.
-func (e *Editor) recall(back bool) {
-	prefix := string(e.cmdKind)
-	for i := len(e.history) - 1; i >= 0; i-- {
-		if strings.HasPrefix(e.history[i], prefix) && string(e.cmdline) != e.history[i][1:] {
-			if back {
-				e.cmdline = []rune(e.history[i][1:])
-				return
-			}
-		}
-	}
-	if !back {
-		e.cmdline = nil
-	}
+	// An edited line is the prefix the next recall matches.
+	e.recall = Recall{}
 }
 
 // runSearch handles / and ?.

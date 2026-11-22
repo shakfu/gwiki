@@ -384,6 +384,10 @@ func (m *WikiModel) viewStats() []string {
 	cols := m.statsColumns()
 	h := m.bodyHeight()
 	render := func(col int, width int) []string {
+		x := 0
+		if col == 1 {
+			x = m.width - width
+		}
 		rows := cols[col]
 		sel := selectable(rows)
 		cursor := -1
@@ -396,6 +400,10 @@ func (m *WikiModel) viewStats() []string {
 		if cursor >= h {
 			start = cursor - h + 1
 		}
+		m.addZone(x, 1, width, min(h, len(rows)-start), func(_, y int) { m.clickStats(col, start+y) }, func(by int) {
+			m.homeCol = col
+			m.homeMove(func(pos, _ int) int { return pos + by })
+		})
 		var out []string
 		for i := start; i < len(rows) && len(out) < h; i++ {
 			text := truncate(rows[i].text, width)

@@ -83,6 +83,10 @@ func init() {
 			m.reloadAll()
 			return nil
 		}},
+		{names: []string{"mouse"}, help: "turn mouse capture off, for the terminal's text selection, or on", run: func(m *WikiModel, _ string) error {
+			m.setMouse(!m.mouseOn)
+			return nil
+		}},
 		{names: []string{"help"}, help: "every key and command", run: func(m *WikiModel, _ string) error {
 			m.openHelp()
 			return nil
@@ -122,6 +126,7 @@ func (m *WikiModel) startCommand() {
 		m.status = ""
 		return m.commandLine(line)
 	})
+	m.prompt.history = ':'
 }
 
 // commandLine runs a ':' line typed outside the buffer: a wiki command, or

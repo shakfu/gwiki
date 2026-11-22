@@ -9,6 +9,7 @@ import (
 
 	"github.com/shakfu/gwiki/internal/display"
 	"github.com/shakfu/gwiki/internal/render"
+	"github.com/shakfu/gwiki/internal/syntax"
 	"github.com/shakfu/gwiki/internal/vim"
 	"github.com/shakfu/gwiki/internal/wiki"
 )
@@ -130,6 +131,7 @@ func (m *WikiModel) viewBuffer(width, height int) []string {
 		doc := render.Render([]byte(e.ed.Text()), render.Options{Width: max(10, width-2), Styles: readerStyles, Selected: -1, Broken: func(l render.Link) bool {
 			return broken[string(l.Form)+"\x00"+l.Target+"\x00"+l.Anchor]
 		}})
+		m.warnCode(doc.Warnings)
 		e.previewRows = len(doc.Lines)
 		e.previewTop = max(0, min(e.previewTop, len(doc.Lines)-height))
 		out := []string{}
@@ -142,14 +144,21 @@ func (m *WikiModel) viewBuffer(width, height int) []string {
 	cur := e.ed.Cursor
 	selA, selZ, hasSel := e.ed.Selection()
 	inCode := codeStateBefore(e.ed, e.ed.Top)
+	code := m.codeSpans()
 	// The cursor is drawn only while the buffer has the focus.
 	focused := m.focus == focusContent
 
 	var out []string
+	e.rows = e.rows[:0]
 	for l := e.ed.Top; l < e.ed.Buf.Lines() && len(out) < height; l++ {
 		text := e.ed.Buf.LineString(l)
 		fenced := strings.HasPrefix(strings.TrimSpace(text), "```")
 		spans := m.editSpans(text, inCode || fenced)
+		for _, c := range code[l] {
+			if st, ok := styleSyntax[c.Class]; ok {
+				spans = append(spans, span{c.From, c.To, st})
+			}
+		}
 		if fenced {
 			inCode = !inCode
 		}
@@ -184,9 +193,67 @@ func (m *WikiModel) viewBuffer(width, height int) []string {
 				cursorCol = cur.Col
 			}
 			out = append(out, styleDim.Render(number)+" "+m.styleRow(runes, start, end, spans, marks, sel, cursorCol))
+			e.rows = append(e.rows, bufRow{l, start, end})
 		}
 	}
 	return out
+}
+
+// codeSpans classes the lines inside the buffer's fenced code blocks, by
+// buffer line, once per text. Fences are found as codeStateBefore finds them.
+func (m *WikiModel) codeSpans() map[int][]syntax.Span {
+	e := m.edit
+	text := e.ed.Text()
+	if e.code != nil && e.codeText == text {
+		return e.code
+	}
+	e.code, e.codeText = map[int][]syntax.Span{}, text
+	var warnings []string
+	lang, from, in := "", 0, false
+	var body []string
+	flush := func() {
+		spans, err := syntax.Highlight(lang, strings.Join(body, "\n"))
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("code at line %d: %v", from+1, err))
+		}
+		for i, s := range spans {
+			if len(s) > 0 {
+				e.code[from+i] = s
+			}
+		}
+	}
+	for l := 0; l < e.ed.Buf.Lines(); l++ {
+		line := e.ed.Buf.LineString(l)
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(trimmed, "```") && in:
+			flush()
+			in = false
+		case strings.HasPrefix(trimmed, "```"):
+			lang, from, body, in = "", l+1, nil, true
+			if f := strings.Fields(strings.TrimLeft(trimmed, "`")); len(f) > 0 {
+				lang = f[0]
+			}
+		case in:
+			body = append(body, line)
+		}
+	}
+	if in {
+		flush()
+	}
+	m.warnCode(warnings)
+	return e.code
+}
+
+// warnCode shows code highlighting's warnings on the status line, each set
+// once.
+func (m *WikiModel) warnCode(warnings []string) {
+	w := strings.Join(warnings, "; ")
+	if w == "" || w == m.edit.warned {
+		return
+	}
+	m.edit.warned = w
+	m.status, m.statusErr = "warning: "+w, true
 }
 
 // codeStateBefore reports whether a line starts inside a fenced code block.

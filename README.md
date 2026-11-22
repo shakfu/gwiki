@@ -110,12 +110,17 @@ Wiki actions are commands, typed in the page or after `:` elsewhere:
 :search text    search every page             :fix         repairs for the link under the cursor
 :broken :tasks  broken links; tasks           :backlinks   to the backlinks panel
 :preview        the page drawn as markdown    :check       the broken links in it
-:external       edit in $EDITOR               :overview :reload :help
+:external       edit in $EDITOR               :mouse       mouse capture off or on
+:overview :reload :help
 ```
 
 A page with unsaved changes is not left: `:w` writes it, `:e!` discards the edits. In insert mode, `enter` continues a list, numbering and checkboxes included, and `ctrl-n` completes a page after `[[`, a heading after `#`, or a path after `](`. `"+y` copies to the system clipboard through the terminal (OSC 52). The buffer is autosaved to `.gwiki/drafts/` and offered again if gwiki is interrupted. A write is refused when the page changed on disk since it was read.
 
 Pages changed outside the interface, by an editor, git or an agent, reload within a second; a buffer with unsaved changes is marked instead.
+
+Fenced code with a language is highlighted, in the buffer and the preview. Up and down on a `:` or `/` line recall earlier lines that begin with what is typed; the history is shared by every page.
+
+The mouse works: click a tree row, list row, backlink or tab to open it, and the wheel scrolls the pane under it. A click in the page places the cursor; a second click on the same link follows it. `:mouse` turns capture off, so the terminal selects text, and on again.
 
 Macros, marks, blockwise visual, `:g`, folds and mappings are not there; `:help` lists what is.
 

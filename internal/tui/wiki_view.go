@@ -18,6 +18,7 @@ func (m *WikiModel) View() string {
 	if m.width < 1 || m.height < 1 {
 		return ""
 	}
+	m.zones = m.zones[:0]
 
 	var body []string
 	switch m.screen {
@@ -78,12 +79,16 @@ func (m *WikiModel) viewWikiHeader() string {
 	var right []seg
 	if isTab(m.screen) {
 		// The overview's header is its tab bar.
+		x := ansi.StringWidth(" " + name + "  ")
 		for _, tab := range overviewTabs {
 			style := styleDim
 			if tab == m.screen {
 				style = styleTab
 			}
-			left = append(left, seg{" " + tabName(tab) + " ", style}, plain(" "))
+			label := " " + tabName(tab) + " "
+			m.addZone(x, 0, ansi.StringWidth(label), 1, func(int, int) { m.showTab(tab) }, nil)
+			x += ansi.StringWidth(label) + 1
+			left = append(left, seg{label, style}, plain(" "))
 		}
 		summary := m.latestSummary()
 		if m.screen == screenTasks {
@@ -196,6 +201,10 @@ func (m *WikiModel) viewRead() []string {
 	h := m.bodyHeight()
 	tw, rw := m.treeWidth(), m.contentWidth()
 	tree := m.viewTree(tw, h)
+	m.addZone(0, 1, tw, h, m.clickTree, func(by int) {
+		m.focus = focusTree
+		m.treeMove(func(pos, _ int) int { return pos + by })
+	})
 
 	var right []string
 	if rw > 0 {
@@ -207,6 +216,16 @@ func (m *WikiModel) viewRead() []string {
 				right = append(right, line)
 			}
 			buffer := m.viewBuffer(rw, m.contentHeight())
+			x := m.width - rw
+			m.addZone(x, 1+len(right), rw, m.contentHeight(), m.clickBuffer, m.wheelBuffer)
+			if ph := m.panelHeight(); ph > 1 {
+				m.addZone(x, 1+len(right)+m.contentHeight()+1, rw, ph-1, func(_, y int) {
+					if i := m.cur.panelStart + y; i < len(m.cur.linkers) {
+						m.cur.backCursor = i
+						m.panelEnter()
+					}
+				}, func(by int) { m.panelMove(func(pos, _ int) int { return pos + by }) })
+			}
 			for len(buffer) < m.contentHeight() {
 				buffer = append(buffer, "")
 			}
@@ -354,6 +373,7 @@ func (m *WikiModel) viewPanel(width int) []string {
 	t.layout(width)
 	room := ph - 1
 	start := max(0, r.backCursor-room+1)
+	r.panelStart = start
 	for i := start; i < len(t.rows) && len(lines) < ph; i++ {
 		text := t.draw(t.rows[i])
 		if i == r.backCursor && m.focus == focusPanel {

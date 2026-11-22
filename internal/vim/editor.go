@@ -88,6 +88,10 @@ type Editor struct {
 	Message string
 	Err     bool
 
+	// History is the ':' and search lines entered. Hosts that open one editor
+	// per page share one History between them.
+	History *History
+
 	// Search is the last pattern, and Highlight is set while its matches are
 	// shown; the host reads both through Matches.
 	Search    string
@@ -108,7 +112,7 @@ type Editor struct {
 	visualStart Pos
 	cmdKind     rune
 	cmdline     []rune
-	history     []string
+	recall      Recall
 	searchDir   int
 	lastFind    [2]string // the f, F, t or T command and its target
 	wantCol     int       // the column j and k aim for
@@ -126,6 +130,7 @@ func New(text string) *Editor {
 		Height:    24,
 		registers: map[rune]register{},
 		searchDir: 1,
+		History:   &History{},
 	}
 }
 
@@ -145,6 +150,18 @@ func (e *Editor) Load(text string) {
 func (e *Editor) SetCursor(p Pos) {
 	e.Cursor = e.Buf.clamp(p, e.Mode == Insert || e.Mode == Replace)
 	e.wantCol = e.Cursor.Col
+}
+
+// Scroll moves the view n lines down, or up when n is negative, keeping the
+// cursor on screen, as ctrl-e and ctrl-y do.
+func (e *Editor) Scroll(n int) {
+	e.Top = max(0, min(e.Top+n, max(0, e.Buf.Lines()-1)))
+	if n > 0 {
+		e.Cursor.Line = max(e.Cursor.Line, e.Top)
+	} else {
+		e.Cursor.Line = min(e.Cursor.Line, e.bottom())
+	}
+	e.Cursor = e.Buf.clamp(e.Cursor, e.Mode == Insert || e.Mode == Replace)
 }
 
 // Text is the buffer's content.
