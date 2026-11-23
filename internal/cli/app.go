@@ -26,6 +26,10 @@ type App struct {
 	// Dir is the working directory the project is discovered from.
 	Dir string
 
+	// User opens the user wiki, ~/.gwiki, in place of the project's. Only -u
+	// sets it; nothing falls back to the user wiki.
+	User bool
+
 	// Now is the clock, so relative dates are reproducible under test.
 	Now func() time.Time
 
@@ -120,6 +124,9 @@ func init() {
 func (a *App) Run(args []string) int {
 	if a.Env == nil {
 		a.Env = os.Getenv
+	}
+	for len(args) > 0 && (args[0] == "-u" || args[0] == "--user") {
+		a.User, args = true, args[1:]
 	}
 	return a.dispatch(wikiTable, args)
 }

@@ -12,65 +12,143 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Fro
 
 **The mouse works in the interface.** A click opens a tree row, list row, backlink or overview tab, and folds a directory at its marker. A click in the page places the cursor, and a second click on the same link follows it, so one click shows where a link goes. A click on a repair only selects it, since applying one writes. The wheel scrolls the pane under the pointer. Mouse capture disables the terminal's own text selection, so `:mouse` toggles it. Click targets are recorded as each frame is drawn, so hit testing uses the layout on screen.
 
+### Changed
+
+**A browser-view tick on a line that holds no task is now 400, not 404.**
+
 ### Fixed
+
+**A markdown link destination is decoded as the browser view decodes it.** `[f](no&#95;such.md)` was split at the `#` of the entity, into target `no&`, and `[p](my\_page.md)` resolved to a file named with the backslash. The rendered `href` decoded both, so `check` and the browser disagreed. Backslash escapes and entity references are now decoded before resolving and before a move checks a destination. The destination is still shown and matched as written. The cache schema is now 9, so the cache is rebuilt on first use.
+
+**A link to a directory follows its pages.** Adding the first page under `media/` left `[m](media/)` a file link. Removing the last page left it a missing page. Refresh now reclassifies links to every directory above an added or removed page.
+
+**`gwiki done "call at 10:30"` finds the task.** A trailing `:digits` was read as `page:line`, and the missing page `call at 10` ended the lookup. Text matching now runs when no page matches.
+
+**`r`, `f`, `F`, `t` and `T` took a named key's first letter.** `r<tab>` wrote `t` and `f<tab>` searched for `t`. Tab and space now stand for their characters; `esc` and other named keys cancel. `3r<enter>` wrote three line breaks; as in vim it now replaces the three characters with one.
+
+**`:w`, `:q`, `:wq` and `:x` typed outside the buffer followed their own rules.** From the tree or a list, `:w` skipped a buffer without changes and reported "written" even when the page had been removed on disk, and `:wq!` ignored the `!`. These commands now run in the page's editor, as if typed there. As in vim, `:w` and `:wq` always write and `:x` writes only a buffer with changes.
 
 **Up on a `:` or `/` line reaches past the last two lines.** Recall returned the newest line unlike the current one, so repeated presses alternated between the last two. Each page also had its own history, lost on opening another. One history is now shared by every page and the `:` prompt outside the buffer, and recall matches what was typed before it began, as vim's does.
 
-**Four `internal/wiki` tests added in 0.4.1 failed.** The changes they test were incomplete:
+**The tasks list printed a page's `due` value unfiltered.** It now passes through the filter used for titles and tags.
 
-- **A markdown link is shown and matched as written.** 0.4.1 stored the decoded destination, so `my\_page.md` showed as `my_page.md`. Drift detection searches the page for that text, so it skipped such links. The cache now records the source destination; schema 9 rebuilds it. `classify` no longer unescapes backslashes a second time.
+**`>` and `<` left the cursor on the last shifted line.** As in vim, it now stays on the first.
 
-- **A link to a directory follows its pages.** Adding the first page under `media/` left `[m](media/)` a file link. Removing the last page left it a missing page. Refresh now reclassifies links to every directory above an added or removed page.
+**`gj` and `gk` kept the rune offset, not the screen column**, so the cursor drifted across rows of CJK text or tabs. They now keep the screen column.
 
-- **Recent pages show their git author for a non-ASCII name.** git quoted `café.md` as `"caf\303\251.md"`, which matched no page. `log` and `status` now run with `-z`.
-
-- **`gwiki done "call at 10:30"` finds the task.** A trailing `:digits` was read as `page:line`, and the missing page `call at 10` ended the lookup. Text matching now runs when no page matches.
-
-## [0.4.1]
-
-### Changed
-
-**The browser and agents apply one rule to a write.** Both require the hash a page was read at, write LF line endings with one final newline, and name a checklist item by its text as well as its line. The browser created a page when the hash was empty, and accepted a task without its text. A task line that holds no task is now 400, not 404.
-
-**An edit that keeps a page's size and modification time is re-indexed.** Refresh compared only those two, so `rsync -t` or `tar` could change a page unseen. Refresh now also compares the inode change time, which tools cannot set. A page whose change time moved is re-read but re-indexed only if its hash differs, so a `chmod` costs one read. Windows keeps the old check. The cache schema is now 7, so the cache is rebuilt on first use.
-
-**A cache locked by another process is reported, not deleted.** `Open` rebuilt the cache on any connect error, including a lock held past the 5-second busy timeout, and removed the database under the other process. Only a corrupt file, a non-database file or another schema version now triggers a rebuild.
+## [0.6.1]
 
 ### Fixed
 
-**A write checks each page again just before replacing it.** An editor outside gwiki takes no lock, so a save made while a write was staging was overwritten. A gap of one read and one rename remains.
+**`gwiki lsp` on Windows could not find the wiki.** `file:///C:/x` parsed to the path `\C:\x`, and a drive path was written as `file://C:/x`, whose drive parses as the host. Drive letters are now upper-cased, so VS Code's `c:` and Go's `C:` name the same buffer, and a URI host names a UNC share.
 
-**Changing a task's status refuses a task that changed since it was listed.** Only the page hash was compared, so an item that took another's place at the same offset was ticked instead. The item's line, text and status are now compared with the page on disk.
+**Pages with non-ASCII names showed no author or commit date** in the recent list on the home screen and in the browser view, and were not marked uncommitted. git quoted their paths, which then matched no page.
 
-**`task promote` refuses a task whose page shrank since it was listed.** It panicked on the stale offset.
+**`gwiki tag` and `untag` took flags as tags**: `gwiki tag p --json` added the tag `--json`. An unknown flag is now a usage error; `--` passes a tag that begins with a dash.
 
-**A move rewrites the moved page's wiki links to itself**, such as `[[design-sketch#Tokens]]`, and `--dry-run` lists them. They broke when the file name changed.
+**A panic in a request ended the `lsp` or `mcp` session.** The request now fails with an internal error (-32603), and the stack goes to the log.
 
-**A move of an untitled page rewrites `[[old-name]]` links.** Such a page takes its title from its file name, so the move changed its title and left those links broken.
+**`gwiki lsp` ran malformed requests.** It answered a request with a `null` or object id, or without `"jsonrpc": "2.0"`, as if valid; it now rejects them, as `mcp` does. A second `initialize` opened another cache and leaked the first; it is now an error.
 
-**The browser view ties each checkbox to the task on its line.** A blockquoted checkbox renders but is not a task, and boxes were matched by position, so every later box ticked the wrong item.
+**A moved page lost its mode**, taking 0644, and left its directory behind when that was now empty. A move keeps the mode, and a move or removal deletes the directories it empties.
 
-**A rename in the language server could overwrite unsaved changes** when the editor spelled the page's URI another way, such as `%20` for a space. Open buffers are now keyed by file path.
+**Removing one empty page and adding another counted as a rename**, since every empty page has the same hash. The link fixes then offered the new page as where the old one went. Empty pages are no longer matched, and the recorded renames are capped at the latest 1000, like the removals they come from.
 
-**The language server's outline leaves out empty headings.** A bare `#` came out as a nameless symbol at line -1, which LSP forbids.
+**Writes sync their directories**, so a page written, moved or removed survives a crash. Before, only the file's contents were synced. Windows cannot sync a directory and skips it.
 
-**With colour on, `links`, `show`, `check` and `tasks` printed escape sequences from page text.** Link text, task text and skip reasons now pass through the same filter as the rest of the output.
+### Changed
 
-**The preview and the tasks list printed a page's `due` value unfiltered.** It now passes through the filter used for titles and tags.
+**The build workflow runs by hand without a tag**, to try a release build before tagging. It builds the chosen branch as version `dev-<commit>` and uploads the archives as a workflow artifact, releasing nothing. With a tag it releases that tag, as before.
 
-**Pasting into the editor saved carriage returns, and a one-character paste did nothing.** Terminals paste line breaks as `\r`, which now become line breaks.
+**Built with Go 1.26.10**, up from 1.26.6, for 10 standard-library vulnerabilities that `govulncheck` reports in `net/http`, `crypto/x509`, `crypto/tls`, `net/textproto` and `os`.
 
-**Undo after a completion damaged the page, and the completion was left out of the draft.** A completion is now one undoable edit.
+**The test for a same-size edit with its mtime restored skips on Windows.** Windows has no inode change time, so `rsync -t` and `tar` edits go unnoticed there. Reading NTFS ChangeTime would cost a file open per page per refresh.
 
-**`ctrl-o` in insert mode left the editor in normal mode, and `u` could not undo the insert.** After one normal command the editor returns to insert mode, as in vim.
+## [0.6.0]
 
-**`d0`, `dh` and `db` deleted a character when the cursor could not move.** They now delete nothing, as in vim.
+### Added
 
-**`.` repeated commands that changed nothing, and did nothing after a visual operator.** A failed command or a selection no longer replaces the last change. After a visual operator, `.` applies it to the same number of lines, or characters within a line, from the cursor. `>` and `<` now leave the cursor on the first shifted line.
+**A user wiki, in `~/.gwiki`, opened only with `-u` / `--user`.** `gwiki -u init` creates it; `-u` before any command, including `ui`, `serve`, `mcp` and `lsp`, works on it in place of the project's wiki. Nothing falls back to it, so a command run in a project with no wiki cannot write there. Its repository is `~/.gwiki/.git` or one at `~`; with neither, file links stay within `~/.gwiki`. The interface and the browser view name it "user", whatever its `config.json` says. See `docs/dev/user-wiki.md`.
 
-**Undoing a change took two `u`.** One now undoes both the deletion and the typed text.
+### Changed
 
-**The editor wrapped lines by character count, not screen width.** CJK lines ran past the edge and lines with tabs broke early. `gj` and `gk` now keep the screen column.
+**Wiki discovery stops at the repository root, and skips the home directory.** A `.gwiki` above the repository, or in `~`, was found from any directory below it. The one in `~` is now the user wiki, which needs `-u`.
+
+**CI also runs the tests on macOS and Windows**, where the release binaries run but were only cross-compiled. Tests whose stand-in editor is a `/bin/sh` script, or that make a file unreadable with `chmod`, skip on Windows.
+
+## [0.5.1]
+
+### Added
+
+**Release builds.** Pushing a version tag runs `.github/workflows/build.yml`: `make check`, then binaries for macOS arm64, Linux x64 and Windows x64, a `SHA256SUMS`, and a GitHub release titled with the version, with that version's CHANGELOG section as its notes. The version is stamped from the tag. The workflow warns when `cmd/gwiki/main.go` names another version. Run by hand with a `tag` input, it releases an existing tag.
+
+### Fixed
+
+**0.5.0 reported itself as 0.4.0** when built with `go install` or a plain `go build`; its source was not bumped. Builds through `make` stamped the tag and were right.
+
+## [0.5.0]
+
+### Added
+
+**CI.** `.github/workflows/ci.yml` runs `make ci`: `make check`, then `staticcheck` and `govulncheck` at versions pinned in the Makefile. The review found GO-2026-5320 by hand; `govulncheck` now checks for such advisories on every push.
+
+### Security
+
+**The browser view's source-file panel no longer serves hidden files.** `/api/file` served any repository file under 1 MB, including `.env`, `.git/config` and `.gwiki/cache.db`. A path with a part starting with `.` is now refused, directly or through a symlink. Refusing dot-paths rather than serving only tracked or linked files: one check, no git call, and it covers untracked secrets. A line anchor into a dotfile, such as `.github/workflows/ci.yml#L3`, no longer shows its source.
+
+### Changed
+
+**The browser view and MCP apply one set of rules to a whole-page write.** Both write `\n` line breaks and a final newline; MCP `gwiki_write` wrote its content as given. Both refuse a save without a base hash; the browser view created the page. Both require a checklist item's text to tick it; the browser view without the text ticked whatever was on that line. The browser's own page always sends both.
+
+**Change detection also compares each page's inode change time.** An edit that keeps the size and restores the mtime, as `rsync -t` and `tar` do, was never re-indexed. The cache schema is now 7, so the cache is rebuilt on first use. On a platform without an inode change time, size and mtime are compared as before.
+
+### Fixed
+
+**Ticking or promoting a checklist item could change another item, or panic.** A `Task` held across a refresh kept its byte offset. After items were reordered it ticked whichever item now sat there; after the page shrank, `Promote` sliced past the end. Both now check that the offset still holds the task's text, and return a conflict if not. The terminal interface had no such check; the browser view and MCP each had their own.
+
+**The browser view ticked the wrong item after a blockquoted task.** It matched checkboxes to tasks by position, and goldmark draws boxes the wiki does not list as tasks. Each box now carries its source line, and a box with no task on that line stays disabled.
+
+**A completion in the terminal editor was not recorded for undo, and scheduled no draft.** A later `u` restored text at the wrong offset. A completion is now one undo step, or part of the insertion it ends.
+
+**Moving an untitled page broke `[[title]]` links to it.** Its title is its file name, which the move changes, but the plan resolved links against the old title. Such links are now rewritten, and `--dry-run` lists them.
+
+**A move left the page's wiki links to itself broken**, such as `[[old-name#Sec]]` inside `old-name.md`, and `--dry-run` did not list them. They are now rewritten with the page.
+
+**`ctrl-o` in insert mode left the editor in normal mode, with the insertion outside the undo log.** `u` then undid the change before it. `ctrl-o` now ends the insertion as one undo step, runs one normal-mode command, and returns to insert, as in vim.
+
+**A paste in the terminal editor saved `\r` line breaks into the page, and a one-rune paste was dropped.** Terminals send pasted line breaks as `\r`; they are now inserted as `\n`.
+
+**`d0`, `dh` and `db` at the start of a line deleted a character.** An exclusive motion that does not move now covers nothing; `c` with one still enters insert mode, as in vim.
+
+**The language server missed open buffers whose URI the client spelled differently**, as VS Code does for a path holding `+`, `(` or `@`. Its unsaved-changes check on rename did not fire, and the rename's edits were positioned in the saved file. Buffers are now keyed by the server's own spelling of the URI.
+
+**`c` took two undo steps**: `u` after `cwxyz<esc>` left the deletion in place. The deletion and the insertion are now one step.
+
+**`.` repeated the wrong keys.** An operator abandoned with `esc`, or a change that failed, was recorded with the keys after it, so `.` ran motions. A count on `.` after a register, as in `"a2dd` then `3.`, typed the keys into the buffer. A visual-mode operator repeated as nothing; it now repeats over the same number of lines, or of characters on one line, from the cursor, as in vim.
+
+**The outline in the language server failed while a heading was being typed.** `documentSymbol` sent an empty heading with line -1 and no name, which the protocol forbids and a strict client rejects. Such a heading is left out.
+
+**The terminal preview printed a page's front matter `due` as written**, control characters included. It is cleaned as every other field is.
+
+**`gwiki links`, `show`, `check` and `tasks` printed escape sequences from link and task text**, including an OSC 52 clipboard write. Table cells that are not styled are now cleaned like the rest.
+
+**`Open` deleted the cache when another gwiki process held its lock** past the 5 s timeout. The other process kept writing to the unlinked file, so the two used different caches until restart. A busy cache is now reported and left alone.
+
+**A save by an editor outside gwiki during a write could be overwritten.** Every page's hash was checked once, before any file was staged, so for a move the window was the whole batch. Each page is now checked again just before its rename; the window is that one step. A page that changed stops the batch there, as a partial write naming what landed.
+
+**A restored draft could overwrite a newer page.** It took the page's current hash, so `:w` wrote a draft made against an older version over the newer one. It now keeps the hash it was made against: `:w` reports the conflict, and `:w!` overwrites.
+
+**A draft was written in place**, so a crash during the write could leave half of one. It is now written to a temporary file and renamed.
+
+**A paste in normal mode ran as commands.** Pasted `dd` deleted a line. It is now inserted at the cursor as one change, as in vim.
+
+**The checkbox toggle changed the first `[ ]` on the line**, which on `- [x] done [ ] other` is in the text, not the item's box. It now changes the box after the bullet.
+
+**A page removed during a refresh was reported as a skipped file**, so `gwiki check` exited 1 and every command warned until the next refresh. It now counts as removed.
+
+**`dj` on the last line deleted it, and `dk` on the first line likewise.** In vim both fail. `j` on the last line and `k` on the first now fail; a count past the edge still stops at it.
+
+**The terminal editor wrapped lines by rune count**, so a line of CJK text or tabs ran past the pane and was cut. Rows are now measured in cells, as they are drawn.
 
 ## [0.4.0]
 

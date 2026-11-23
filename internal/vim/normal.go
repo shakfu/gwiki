@@ -1,6 +1,7 @@
 package vim
 
 import (
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -28,6 +29,9 @@ var changeCommands = map[string]bool{
 func (e *Editor) normalKey(k string) {
 	if k == "esc" || k == "ctrl+[" {
 		e.pending = nil
+		if !e.replaying {
+			e.changing = false // an abandoned change is not repeated
+		}
 		if e.Mode == Visual || e.Mode == VisualLine {
 			e.Mode = Normal
 		}
@@ -254,11 +258,16 @@ func (e *Editor) run(keys []string, count int, reg rune) result {
 		}
 		keys := e.lastChange
 		if count > 0 {
-			// A count on "." replaces the one the change was made with.
-			for len(keys) > 0 && len(keys[0]) == 1 && keys[0][0] >= '1' && keys[0][0] <= '9' {
-				keys = keys[1:]
+			// A count on "." replaces the one the change was made with. It
+			// goes after a register, which parse reads first.
+			var prefix []string
+			if len(keys) >= 2 && keys[0] == `"` {
+				prefix, keys = keys[:2], keys[2:]
 			}
-			keys = append(strings.Split(itoa(count), ""), keys...)
+			if _, i := readCount(keys, 0); i > 0 {
+				keys = keys[i:]
+			}
+			keys = slices.Concat(prefix, strings.Split(itoa(count), ""), keys)
 		}
 		e.replaying = true
 		e.pending = nil

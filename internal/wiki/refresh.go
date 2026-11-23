@@ -231,8 +231,8 @@ func (w *Wiki) Refresh() (Changes, error) {
 			return ch, fmt.Errorf("index %s: %w", p.rel, err)
 		}
 		// A rename needs one page each side: content shared by several, such
-		// as an empty page or a template, says nothing of which became which.
-		if !added[id] || addedHashes[p.hash] > 1 {
+		// as a template, or by every empty page, says nothing of which became which.
+		if !added[id] || addedHashes[p.hash] > 1 || len(p.src) == 0 {
 			continue
 		}
 		old, err := renamedFrom(tx, p.hash, id)

@@ -130,7 +130,7 @@ func (s *Server) Serve(in io.Reader, out io.Writer, logw io.Writer) error {
 				return nil
 			}
 		case <-tick:
-			s.poll()
+			s.guard("poll", func() (any, error) { s.poll(); return nil, nil })
 		}
 	}
 }
@@ -174,13 +174,17 @@ func (s *Server) handle(body []byte) (exit bool) {
 		return false // a response; the server sends no requests
 	}
 	request := len(msg.ID) > 0
-
 	if problem := invalidRequest(msg); problem != "" {
-		if request {
-			s.send(map[string]any{"jsonrpc": "2.0", "id": nil, "error": &rpcError{Code: codeInvalidRequest, Message: problem}})
-		} else {
+		if !request {
 			s.logf("ignored %s: %s", msg.Method, problem)
+			return false
 		}
+		// The id is echoed when it is valid, else null as JSON-RPC requires.
+		id := msg.ID
+		if !validID(id) {
+			id = json.RawMessage("null")
+		}
+		s.reply(id, nil, &rpcError{Code: codeInvalidRequest, Message: problem})
 		return false
 	}
 	if msg.Method == "exit" {
@@ -210,7 +214,7 @@ func (s *Server) handle(body []byte) (exit bool) {
 		}
 		return false
 	}
-	result, err := s.call(h, msg)
+	result, err := s.guard(msg.Method, func() (any, error) { return h(s, msg.Params) })
 	if request {
 		s.reply(msg.ID, result, err)
 	} else if err != nil {
@@ -219,36 +223,42 @@ func (s *Server) handle(body []byte) (exit bool) {
 	return false
 }
 
-// call runs a handler, turning a panic into an internal error that is logged
-// with its stack, so one bad request does not end the session.
-func (s *Server) call(h handler, msg message) (result any, err error) {
+// guard runs f, turning a panic into an internal error so one bad request
+// does not end the session. The stack goes to the log.
+func (s *Server) guard(what string, f func() (any, error)) (result any, err error) {
 	defer func() {
-		if r := recover(); r != nil {
-			s.logf("%s: panic: %v\n%s", msg.Method, r, debug.Stack())
-			result, err = nil, &rpcError{Code: codeInternal, Message: fmt.Sprintf("internal error: %v", r)}
+		if p := recover(); p != nil {
+			s.logf("%s: panic: %v\n%s", what, p, debug.Stack())
+			result, err = nil, &rpcError{Code: codeInternal, Message: fmt.Sprintf("internal error: %v", p)}
 		}
 	}()
-	return h(s, msg.Params)
+	return f()
 }
 
 // invalidRequest explains why a message is not valid JSON-RPC 2.0, or returns
-// the empty string. LSP ids are integers or strings, never null.
+// the empty string.
 func invalidRequest(msg message) string {
 	if msg.JSONRPC != "2.0" {
 		return `"jsonrpc" must be "2.0"`
 	}
-	if len(msg.ID) == 0 {
-		return ""
-	}
-	var id any
-	if json.Unmarshal(msg.ID, &id) != nil {
+	if len(msg.ID) > 0 && !validID(msg.ID) {
 		return "an id must be a string or a number"
 	}
-	switch id.(type) {
-	case string, float64:
-		return ""
+	return ""
+}
+
+// validID reports whether a request id is a string or a number, as LSP
+// requires; never null.
+func validID(id json.RawMessage) bool {
+	var v any
+	if json.Unmarshal(id, &v) != nil {
+		return false
 	}
-	return "an id must be a string or a number"
+	switch v.(type) {
+	case string, float64:
+		return true
+	}
+	return false
 }
 
 type handler func(s *Server, params json.RawMessage) (any, error)

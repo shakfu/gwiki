@@ -11,7 +11,7 @@ Pages are committed; `.gwiki/cache.db` is not. The cache holds titles, headings,
 
 ### Schema version
 
-The cache's `PRAGMA user_version` is [schemaVersion](/internal/wiki/cache.go#L17). A cache with any other version, or one SQLite cannot read, is deleted and rebuilt. Version 4 re-indexed every wiki when sections were added, so READMEs got their directory's title.
+The cache's `PRAGMA user_version` is [schemaVersion](/internal/wiki/cache.go#L22). A cache with any other version, or one SQLite cannot read, is deleted and rebuilt. Version 4 re-indexed every wiki when sections were added, so READMEs got their directory's title.
 
 ### Refresh
 

@@ -176,6 +176,16 @@ func (w *Wiki) Rebuild() error {
 	return err
 }
 
+// busy reports whether err is SQLite's "locked by another connection".
+func busy(err error) bool {
+	var e *sqlite.Error
+	if !errors.As(err, &e) {
+		return false
+	}
+	code := e.Code() & 0xff // the primary code, without the extended bits
+	return code == sqlite3.SQLITE_BUSY || code == sqlite3.SQLITE_LOCKED
+}
+
 func (w *Wiki) discard() {
 	w.Close()
 	w.db = nil

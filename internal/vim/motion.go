@@ -43,9 +43,17 @@ func (e *Editor) motion(keys []string, count int, forOp bool) (Pos, bool, bool, 
 	case "g_":
 		text := strings.TrimRight(string(line), " \t")
 		return Pos{cur.Line, max(0, len([]rune(text))-1)}, false, true, done
+	// As in vim, j on the last line and k on the first fail, so dj there
+	// deletes nothing; a count past the end stops at it.
 	case "j", "down", "ctrl+n":
+		if cur.Line == e.Buf.Lines()-1 {
+			return cur, true, false, bad
+		}
 		return Pos{min(cur.Line+n, e.Buf.Lines()-1), e.wantCol}, true, false, done
 	case "k", "up", "ctrl+p":
+		if cur.Line == 0 {
+			return cur, true, false, bad
+		}
 		return Pos{max(cur.Line-n, 0), e.wantCol}, true, false, done
 	case "gj", "gk":
 		return e.displayLine(head == "gj", n), false, false, done
@@ -95,6 +103,10 @@ func (e *Editor) motion(keys []string, count int, forOp bool) (Pos, bool, bool, 
 	case "f", "F", "t", "T":
 		if len(keys) < 2 {
 			return cur, false, false, needMore
+		}
+		if r, ok := keyChar(keys[1]); !ok || r == '\n' {
+			// esc and other named keys cancel, as in vim.
+			return cur, false, false, bad
 		}
 		e.lastFind = [2]string{head, keys[1]}
 		p, ok := e.find(head, keys[1], n, false)
@@ -202,11 +214,11 @@ func (e *Editor) opRange(op string, keys []string, count int) (Pos, Pos, bool, r
 	if linewise {
 		return Pos{min(cur.Line, target.Line), 0}, Pos{max(cur.Line, target.Line), 0}, true, done
 	}
+	if !inclusive && target == cur {
+		return cur, cur, false, empty
+	}
 	a, z := sorted(cur, target)
 	if !inclusive {
-		if a == z {
-			return a, z, false, empty
-		}
 		// An exclusive motion stops one short of its target.
 		if z.Col > 0 {
 			z.Col--

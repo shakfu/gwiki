@@ -28,6 +28,8 @@ part of a page, so text someone else added is kept.
 
 gwiki does not stage or commit. The developer reviews changes with git.`
 
+// A tool that deletes a page or replaces its body must take a base hash; see
+// docs/dev/mcp-base.md.
 var wikiRegistry = []registered{
 	// ------------------------------------------------------------ reading
 
@@ -178,7 +180,8 @@ hash.`,
 
 Use gwiki_edit instead unless most of the page changes. The base hash must be
 the page's current hash; a page changed since is refused, so another writer's
-text is never lost silently. Returns the new hash.`,
+text is never lost silently. Line breaks are written as \n, with a final
+newline. Returns the new hash.`,
 			Annotations: &annotations{DestructiveHint: ptr(true), OpenWorldHint: ptr(false)},
 			InputSchema: props([]string{"page", "base", "content"}, object{
 				"page":    str("The page's path."),

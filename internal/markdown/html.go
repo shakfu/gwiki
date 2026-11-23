@@ -31,8 +31,8 @@ type Target struct {
 // HTML renders a page's body to HTML, with front matter left out. resolve
 // rewrites each link's destination; a nil resolve leaves them as written.
 //
-// Raw HTML in a page is omitted, not passed through: pages come from a
-// repository and an agent as well as from the person reading them.
+// Raw HTML in a page is left out: pages come from a repository and an agent
+// as well as from the person reading them.
 func HTML(src []byte, resolve func(Link) Target) ([]byte, error) {
 	_, bodyStart := splitFront(src)
 	doc := src
@@ -52,8 +52,7 @@ func HTML(src []byte, resolve func(Link) Target) ([]byte, error) {
 		goldmark.WithParserOptions(parser.WithASTTransformers(
 			util.Prioritized(&linkTransformer{resolve: resolve, src: doc}, 100))),
 		goldmark.WithRendererOptions(renderer.WithNodeRenderers(
-			util.Prioritized(&wikiRenderer{resolve: resolve}, 100),
-			util.Prioritized(checkBoxRenderer{}, 100))),
+			util.Prioritized(&wikiRenderer{resolve: resolve}, 100))),
 	)
 	var buf bytes.Buffer
 	if err := md.Convert(doc, &buf); err != nil {
@@ -102,13 +101,37 @@ func (t *linkTransformer) rewrite(n ast.Node, dest []byte, label string, image b
 	}
 }
 
-// wikiRenderer draws [[wiki]] links as anchors.
+// wikiRenderer draws [[wiki]] links as anchors, and checkboxes marked with
+// their source line.
 type wikiRenderer struct {
 	resolve func(Link) Target
+	lines   []int
 }
 
 func (r *wikiRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
 	reg.Register(KindWikiLink, r.render)
+	reg.Register(extast.KindTaskCheckBox, r.renderCheckBox)
+}
+
+// renderCheckBox adds data-line, which the browser view matches to a task.
+// goldmark draws boxes that Parse does not list as tasks, such as one in a
+// blockquote, so matching by position ticks the wrong item.
+func (r *wikiRenderer) renderCheckBox(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
+	if !entering {
+		return ast.WalkContinue, nil
+	}
+	w.WriteString(`<input`)
+	if node.(*extast.TaskCheckBox).IsChecked {
+		w.WriteString(` checked=""`)
+	}
+	if block, ok := node.Parent().(interface{ Lines() *text.Segments }); ok && block.Lines().Len() > 0 {
+		if r.lines == nil {
+			r.lines = lineStarts(source)
+		}
+		w.WriteString(` data-line="` + strconv.Itoa(lineOf(r.lines, block.Lines().At(0).Start)) + `"`)
+	}
+	w.WriteString(` disabled="" type="checkbox"> `)
+	return ast.WalkContinue, nil
 }
 
 func (r *wikiRenderer) render(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
@@ -142,30 +165,4 @@ func (r *wikiRenderer) render(w util.BufWriter, source []byte, node ast.Node, en
 	w.Write(util.EscapeHTML([]byte(n.Label)))
 	w.WriteString(`</a>`)
 	return ast.WalkSkipChildren, nil
-}
-
-// checkBoxRenderer draws a checkbox with its source line, which the browser
-// matches to a task: a blockquoted box renders but is no task, so order is not
-// enough.
-type checkBoxRenderer struct{}
-
-func (checkBoxRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
-	reg.Register(extast.KindTaskCheckBox, renderCheckBox)
-}
-
-func renderCheckBox(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
-	if !entering {
-		return ast.WalkContinue, nil
-	}
-	if node.(*extast.TaskCheckBox).IsChecked {
-		w.WriteString(`<input checked="" disabled="" type="checkbox"`)
-	} else {
-		w.WriteString(`<input disabled="" type="checkbox"`)
-	}
-	if block, ok := node.Parent().(interface{ Lines() *text.Segments }); ok && block.Lines().Len() > 0 {
-		line := bytes.Count(source[:block.Lines().At(0).Start], []byte("\n")) + 1
-		w.WriteString(` data-line="` + strconv.Itoa(line) + `"`)
-	}
-	w.WriteString("> ")
-	return ast.WalkContinue, nil
 }

@@ -197,7 +197,7 @@ func (s *Server) handle(msg message) {
 			fmt.Fprintf(s.logw, "gwiki mcp: ignored %q sent without an id\n", msg.Method)
 			return
 		}
-		if _, err := s.call(msg.Method, msg.Params); err != nil {
+		if _, err := s.guard(msg.Method, msg.Params); err != nil {
 			fmt.Fprintf(s.logw, "gwiki mcp: %s: %v\n", msg.Method, err)
 		}
 		return
@@ -212,7 +212,7 @@ func (s *Server) handle(msg message) {
 		return
 	}
 
-	result, err := s.call(msg.Method, msg.Params)
+	result, err := s.guard(msg.Method, msg.Params)
 	if err == nil && result == nil {
 		// A response carries a result or an error; an empty object stands in
 		// for a method with nothing to return.
@@ -260,13 +260,13 @@ func validID(id json.RawMessage) bool {
 	return false
 }
 
-// call dispatches a method, turning a panic into an internal error that is
-// logged with its stack, so one bad request does not end the session.
-func (s *Server) call(method string, params json.RawMessage) (result any, err error) {
+// guard is dispatch with a panic turned into an internal error, so one bad
+// request does not end the session. The stack goes to the log.
+func (s *Server) guard(method string, params json.RawMessage) (result any, err error) {
 	defer func() {
-		if r := recover(); r != nil {
-			fmt.Fprintf(s.logw, "gwiki mcp: %s: panic: %v\n%s", method, r, debug.Stack())
-			result, err = nil, &rpcError{Code: codeInternal, Message: fmt.Sprintf("internal error: %v", r)}
+		if p := recover(); p != nil {
+			fmt.Fprintf(s.logw, "gwiki mcp: %s: panic: %v\n%s", method, p, debug.Stack())
+			result, err = nil, &rpcError{Code: codeInternal, Message: fmt.Sprintf("internal error: %v", p)}
 		}
 	}()
 	return s.dispatch(method, params)

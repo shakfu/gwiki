@@ -147,7 +147,7 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 	// The name comes with the list so that a page opened directly, without
 	// the overview, still has it for the header; stale, so that every view
 	// shows a failed refresh.
-	writeJSON(w, map[string]any{"name": s.w.Config.Name, "pages": pages, "stale": s.relative(s.stale)})
+	writeJSON(w, map[string]any{"name": s.w.Label(), "pages": pages, "stale": s.relative(s.stale)})
 }
 
 // page is one page with everything the browser draws.
@@ -362,6 +362,20 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 	rel := path.Clean("/" + r.URL.Query().Get("p"))[1:]
 	s.mu.Lock()
 	repo := s.w.Repo
+	s.mu.Unlock()
+	abs := filepath.Join(repo, filepath.FromSlash(rel))
+	inside, err := filepath.Rel(repo, abs)
+	if err != nil || inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) {
+		s.fail(w, errors.New("that path is outside the repository"), http.StatusBadRequest)
+		return
+	}
+	// Hidden files hold secrets and state: .env, .git/config, .gwiki/cache.db.
+	// A symlink to one counts as one, and a page linking one does not unhide it.
+	if hidden(rel) || resolvesHidden(repo, abs) {
+		s.fail(w, errors.New("hidden files are not shown"), http.StatusForbidden)
+		return
+	}
+	s.mu.Lock()
 	linked, err := s.linked(rel)
 	s.mu.Unlock()
 	if err != nil {
@@ -370,12 +384,6 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 	}
 	if !linked {
 		s.fail(w, fmt.Errorf("no page links to %s", rel), http.StatusNotFound)
-		return
-	}
-	abs := filepath.Join(repo, filepath.FromSlash(rel))
-	inside, err := filepath.Rel(repo, abs)
-	if err != nil || inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) {
-		s.fail(w, errors.New("that path is outside the repository"), http.StatusBadRequest)
 		return
 	}
 	// Read through the repository root, so a symlink cannot lead outside it.
@@ -424,6 +432,28 @@ func (s *Server) linked(rel string) (bool, error) {
 	return false, nil
 }
 
+// hidden reports whether a slash-separated path has a part starting with ".".
+func hidden(rel string) bool {
+	for part := range strings.SplitSeq(rel, "/") {
+		if strings.HasPrefix(part, ".") {
+			return true
+		}
+	}
+	return false
+}
+
+// resolvesHidden reports whether abs, with symlinks followed, is a hidden path
+// in repo. A path that does not resolve is left to the read to report.
+func resolvesHidden(repo, abs string) bool {
+	realRepo, err1 := filepath.EvalSymlinks(repo)
+	real, err2 := filepath.EvalSymlinks(abs)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	rel, err := filepath.Rel(realRepo, real)
+	return err == nil && hidden(filepath.ToSlash(rel))
+}
+
 // ---------------------------------------------------------------- writing
 
 func decode(r *http.Request, v any) error {
@@ -453,6 +483,9 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 	var conflict *wiki.ErrConflict
 	hash, warn, err := s.w.Save(id, in.Text, in.Base)
 	switch {
+	case errors.Is(err, wiki.ErrNoBase):
+		s.fail(w, errors.New("base is the hash the page was read with; create a page with /api/new"), http.StatusBadRequest)
+		return
 	case errors.As(err, &conflict):
 		writeStatus(w, http.StatusConflict, map[string]any{
 			"error": s.relative(err.Error()), "current": string(conflict.Current), "hash": conflict.CurrentHash,

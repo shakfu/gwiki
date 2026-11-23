@@ -5,8 +5,10 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // emptyWiki is a repository with an initialised wiki and no pages.
@@ -227,6 +229,38 @@ func TestTaskEditsRefuseAPageChangedSinceIndexing(t *testing.T) {
 	}
 }
 
+// A Task held across a refresh can point at another item (W5) or past the end
+// of a shortened page (W4).
+func TestTaskEditsRefuseAHeldItemThatMoved(t *testing.T) {
+	w, root := emptyWiki(t)
+	put(t, w, root, map[string]string{"plan": "# Plan\n\n- [ ] alpha\n- [ ] bravo\n"})
+	alpha, err := w.FindTask("alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var conflict *ErrConflict
+	swapped := "# Plan\n\n- [ ] bravo\n- [ ] alpha\n"
+	put(t, w, root, map[string]string{"plan": swapped})
+	if _, err := w.SetTaskStatus(alpha, "done"); !errors.As(err, &conflict) {
+		t.Fatalf("SetTaskStatus on a swapped item = %v, want a conflict", err)
+	}
+	if _, _, err := w.Promote(alpha, "tasks"); !errors.As(err, &conflict) {
+		t.Fatalf("Promote on a swapped item = %v, want a conflict", err)
+	}
+	if got := source(t, root, "plan"); got != swapped {
+		t.Fatalf("plan was written:\n%s", got)
+	}
+
+	put(t, w, root, map[string]string{"plan": "# P\n"})
+	if _, err := w.SetTaskStatus(alpha, "done"); !errors.As(err, &conflict) {
+		t.Fatalf("SetTaskStatus past the end = %v, want a conflict", err)
+	}
+	if _, _, err := w.Promote(alpha, "tasks"); !errors.As(err, &conflict) {
+		t.Fatalf("Promote past the end = %v, want a conflict", err)
+	}
+}
+
 func TestReplaceOneSpan(t *testing.T) {
 	w, root := emptyWiki(t)
 	put(t, w, root, map[string]string{"a": "# A\n\naaa and b and b\n"})
@@ -362,6 +396,97 @@ func TestMoveRewritesLinksInTheirOwnForm(t *testing.T) {
 	}
 	if got := strings.Join(broken, ", "); got != "notes/deep/other [[sketch]] ambiguous, notes/far [[sketch]] ambiguous" {
 		t.Fatalf("Broken = %s, want the newly ambiguous [[sketch]] links", got)
+	}
+}
+
+// An untitled page is titled by its file name; a move retitles it, so a link
+// by the old title is rewritten, and planning reports it.
+func TestMoveRewritesLinksToAnUntitledPage(t *testing.T) {
+	w, root := emptyWiki(t)
+	put(t, w, root, map[string]string{
+		"foo": "No heading here.\n",
+		"a":   "# A\n\nSee [[foo]] and [[Foo|the foo]].\n",
+	})
+	plan, err := w.PlanMove("foo", "sub/bar")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Edits) != 2 {
+		t.Fatalf("plan edits = %+v, want both links", plan.Edits)
+	}
+	if _, _, err := w.Move("foo", "sub/bar"); err != nil {
+		t.Fatal(err)
+	}
+	links, _ := w.Links("a")
+	for _, l := range links {
+		if l.Status != StatusOK || l.Resolved != "sub/bar" {
+			t.Errorf("%s is %s, resolved to %q\n%s", l.Written(), l.Status, l.Resolved, source(t, root, "a"))
+		}
+	}
+}
+
+// A page's wiki links to itself are rewritten with it, and planning reports
+// them under the new path.
+func TestMoveRewritesAPagesLinksToItself(t *testing.T) {
+	w, root := emptyWiki(t)
+	put(t, w, root, map[string]string{
+		"old-name": "# Notes\n\n## Sec\n\nSee [[old-name#Sec]] and [[Notes]].\n",
+	})
+	plan, err := w.PlanMove("old-name", "new-name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Edits) != 1 || plan.Edits[0].Page != "new-name" || plan.Edits[0].Old != "old-name#Sec" {
+		t.Fatalf("plan edits = %+v, want the one self link by name", plan.Edits)
+	}
+	if _, _, err := w.Move("old-name", "new-name"); err != nil {
+		t.Fatal(err)
+	}
+	links, _ := w.Links("new-name")
+	for _, l := range links {
+		if l.Status != StatusOK || l.Resolved != "new-name" {
+			t.Errorf("%s is %s\n%s", l.Written(), l.Status, source(t, root, "new-name"))
+		}
+	}
+}
+
+// A moved page keeps its mode, and the directory it leaves, now empty, goes.
+func TestMoveKeepsTheModeAndRemovesTheEmptyDirectory(t *testing.T) {
+	w, root := emptyWiki(t)
+	put(t, w, root, map[string]string{"a/b/page": "# Page\n", "keep": "# Keep\n"})
+	if err := os.Chmod(pageFile(root, "a/b/page"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := w.Move("a/b/page", "c/page"); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(pageFile(root, "c/page"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+		t.Errorf("mode = %v, want 0600", info.Mode().Perm())
+	}
+	if _, err := os.Stat(filepath.Join(w.PagesPath(), "a")); !os.IsNotExist(err) {
+		t.Errorf("the empty source directory stays: %v", err)
+	}
+}
+
+// Every empty page has the same hash; an empty page removed and another added
+// is not a rename.
+func TestEmptyPagesAreNotRenames(t *testing.T) {
+	w, root := emptyWiki(t)
+	put(t, w, root, map[string]string{"a": ""})
+	if err := os.Remove(pageFile(root, "a")); err != nil {
+		t.Fatal(err)
+	}
+	write(t, pageFile(root, "b"), "")
+	ch, err := w.Refresh()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := w.Renames(); len(ch.Renamed) != 0 || len(r) != 0 {
+		t.Fatalf("renamed = %v, renames = %v", ch.Renamed, r)
 	}
 }
 
@@ -521,8 +646,8 @@ func TestCreateReportsAPathItCannotCheck(t *testing.T) {
 }
 
 func TestABatchThatCannotStageEveryPageWritesNone(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root ignores directory permissions")
+	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
+		t.Skip("root ignores directory permissions; on Windows, chmod only sets read-only")
 	}
 	w, root := moveFixture(t)
 	locked := filepath.Join(root, DirName, PagesDir, "notes", "deep")
@@ -548,8 +673,8 @@ func TestABatchThatCannotStageEveryPageWritesNone(t *testing.T) {
 }
 
 func TestAnUnreadablePageDoesNotFailWritesOrOpen(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root reads any file")
+	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
+		t.Skip("root reads any file; on Windows, chmod only sets read-only")
 	}
 	w, root := emptyWiki(t)
 	put(t, w, root, map[string]string{"a": "# A\n", "locked": "# Locked\n"})
@@ -643,8 +768,8 @@ func TestSymlinksAreRefusedAndReported(t *testing.T) {
 }
 
 func TestAnUnreadableDirectoryIsReportedAndRetried(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root reads any directory")
+	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
+		t.Skip("root reads any directory; on Windows, chmod only sets read-only")
 	}
 	w, root := emptyWiki(t)
 	put(t, w, root, map[string]string{"a": "# A\n", "locked/b": "# B\n"})
@@ -673,8 +798,8 @@ func TestAnUnreadableDirectoryIsReportedAndRetried(t *testing.T) {
 }
 
 func TestAMoveThatStopsPartWayNamesWhatLanded(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root ignores directory permissions")
+	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
+		t.Skip("root ignores directory permissions; on Windows, chmod only sets read-only")
 	}
 	w, root := emptyWiki(t)
 	put(t, w, root, map[string]string{"locked/a": "# A\n"})
@@ -874,5 +999,133 @@ func TestFindTaskByTextWithAColonAndDigits(t *testing.T) {
 	}
 	if _, err := w.FindTask("plan:9"); err == nil || !strings.Contains(err.Error(), "no checklist item on line 9") {
 		t.Fatalf("FindTask(plan:9) = %v", err)
+	}
+}
+
+// A cache another process holds locked is reported, not deleted and rebuilt.
+func TestOpenKeepsACacheLockedByAnotherProcess(t *testing.T) {
+	w, _ := emptyWiki(t)
+	before, err := os.Stat(w.Cache())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := w.db.Begin() // _txlock=immediate: takes the write lock
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+
+	saved := busyTimeout
+	busyTimeout = 50
+	t.Cleanup(func() { busyTimeout = saved })
+	if other, err := Open(w.Project); err == nil {
+		other.Close()
+		t.Fatal("Open took a cache another connection holds locked")
+	} else if !busy(err) {
+		t.Fatalf("Open = %v, want a busy error", err)
+	}
+	after, err := os.Stat(w.Cache())
+	if err != nil || !os.SameFile(before, after) {
+		t.Fatalf("the cache file was replaced: %v", err)
+	}
+}
+
+// A read-only transaction does not wait for another process's write lock.
+func TestReadsDoNotTakeTheWriteLock(t *testing.T) {
+	saved := busyTimeout
+	busyTimeout = 50
+	t.Cleanup(func() { busyTimeout = saved })
+	w, _ := emptyWiki(t)
+	other, err := Open(w.Project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+
+	tx, err := w.db.Begin() // _txlock=immediate: takes the write lock
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if _, err := other.readIndex(); err != nil {
+		t.Fatalf("readIndex while another connection writes = %v", err)
+	}
+}
+
+// An edit that keeps the size and restores the mtime, as rsync -t and tar do,
+// is re-indexed.
+func TestRefreshSeesAnEditWithItsMtimeRestored(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no inode change time; see ctime_other.go")
+	}
+	w, root := emptyWiki(t)
+	put(t, w, root, map[string]string{"plan": "# Plan\n\n- [ ] alpha\n"})
+	file := pageFile(root, "plan")
+	info, err := os.Stat(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond) // past the kernel's timestamp granularity
+	write(t, file, "# Plan\n\n- [x] alpha\n")
+	if err := os.Chtimes(file, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	ch, err := w.Refresh()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ch.Modified) != 1 {
+		t.Fatalf("changes = %+v, want plan modified", ch)
+	}
+	if tasks, _ := w.Tasks(TaskFilter{Page: "plan"}); len(tasks) != 1 || tasks[0].Status != "done" {
+		t.Fatalf("tasks = %+v", tasks)
+	}
+}
+
+// An editor outside gwiki that saves a page after the batch is checked is not
+// overwritten: each page is checked again before its rename.
+func TestABatchRechecksEachPageBeforeItsRename(t *testing.T) {
+	w, root := emptyWiki(t)
+	put(t, w, root, map[string]string{
+		"target": "# Target\n",
+		"source": "See [[target]].\n",
+	})
+	outside := "See [[target]]. Saved in an editor.\n"
+	afterStage = func() { write(t, pageFile(root, "source"), outside) }
+	t.Cleanup(func() { afterStage = func() {} })
+
+	_, _, err := w.Move("target", "moved")
+	var partial *ErrPartial
+	if !errors.As(err, &partial) || strings.Join(partial.Done, ",") != "moved" || strings.Join(partial.NotDone, ",") != "source,target" {
+		t.Fatalf("Move = %v", err)
+	}
+	if got := source(t, root, "source"); got != outside {
+		t.Fatalf("the outside save was overwritten:\n%s", got)
+	}
+	var conflict *ErrConflict
+	if !errors.As(partial.Err, &conflict) || conflict.Page != "source" {
+		t.Fatalf("partial.Err = %v, want a conflict on source", partial.Err)
+	}
+}
+
+// A page removed between the scan and its read is a removal, not a skipped
+// file (W14).
+func TestRefreshCountsAPageRemovedMidRefreshAsRemoved(t *testing.T) {
+	w, root := emptyWiki(t)
+	put(t, w, root, map[string]string{"gone": "# Gone\n", "kept": "# Kept\n"})
+	time.Sleep(20 * time.Millisecond)
+	write(t, pageFile(root, "gone"), "# Gone, edited\n")
+	beforeParse = func() { os.Remove(pageFile(root, "gone")) }
+	t.Cleanup(func() { beforeParse = func() {} })
+
+	ch, err := w.Refresh()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(ch.Removed, ",") != "gone" {
+		t.Fatalf("changes = %+v, want gone removed", ch)
+	}
+	if skipped, _ := w.Skipped(); len(skipped) != 0 {
+		t.Fatalf("skipped = %+v", skipped)
 	}
 }

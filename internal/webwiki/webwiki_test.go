@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -377,6 +378,20 @@ func TestFileView(t *testing.T) {
 			t.Errorf("%s was served", path)
 		}
 	}
+
+	// Hidden files are refused, directly or through a symlink (S11).
+	f.writeFile(filepath.Join(f.root, ".env"), "TOKEN=secret\n")
+	f.writeFile(filepath.Join(f.root, ".git", "config"), "[core]\n")
+	if err := os.Symlink(filepath.Join(f.root, ".env"), filepath.Join(f.root, "src", "env")); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{".env", ".git/config", ".gwiki/cache.db", "src/../.env", "src/env"} {
+		res := f.do("GET", "/api/file?p="+path, nil)
+		res.Body.Close()
+		if res.StatusCode != http.StatusForbidden {
+			t.Errorf("%s: %s, want 403", path, res.Status)
+		}
+	}
 }
 
 // Only a file some page links to is served, so the browser view cannot read
@@ -386,11 +401,15 @@ func TestOnlyLinkedFilesAreServed(t *testing.T) {
 	f.writeFile(filepath.Join(f.root, ".env"), "SECRET=1\n")
 	f.writeFile(filepath.Join(f.root, ".git", "config"), "[core]\n")
 	f.writeFile(filepath.Join(f.root, "src", "other.go"), "package lexer\n")
-	for _, path := range []string{".env", ".git/config", ".gwiki/cache.db", ".gwiki/wiki/index.md", "src/other.go", "src"} {
+	// A hidden path is refused before the link check, so with 403 (TestFileView).
+	for path, want := range map[string]int{
+		".env": http.StatusForbidden, ".git/config": http.StatusForbidden, ".gwiki/cache.db": http.StatusForbidden,
+		".gwiki/wiki/index.md": http.StatusForbidden, "src/other.go": http.StatusNotFound, "src": http.StatusNotFound,
+	} {
 		res := f.do("GET", "/api/file?p="+path, nil)
 		res.Body.Close()
-		if res.StatusCode != http.StatusNotFound {
-			t.Errorf("%s: %s, want 404", path, res.Status)
+		if res.StatusCode != want {
+			t.Errorf("%s: %s, want %d", path, res.Status, want)
 		}
 	}
 	f.write("orphan", "# Orphan\n\nSee [other](../../src/other.go).\n")
@@ -496,6 +515,18 @@ func TestSaveNewAndTask(t *testing.T) {
 	res4.Body.Close()
 	if res4.StatusCode != http.StatusOK || !strings.Contains(f.source("plan"), "- [x] first") {
 		t.Fatalf("task: %s\n%s", res4.Status, f.source("plan"))
+	}
+
+	// As in MCP: an item's text is required, and a save needs a base.
+	res6 := f.do("POST", "/api/task", map[string]any{"page": "plan", "line": 3, "status": "open"})
+	res6.Body.Close()
+	if res6.StatusCode != http.StatusBadRequest || !strings.Contains(f.source("plan"), "- [x] first") {
+		t.Fatalf("task without text: %s\n%s", res6.Status, f.source("plan"))
+	}
+	res7 := f.do("POST", "/api/save", map[string]any{"page": "unbased", "base": "", "text": "# New\n"})
+	res7.Body.Close()
+	if res7.StatusCode != http.StatusBadRequest {
+		t.Fatalf("save without a base: %s", res7.Status)
 	}
 
 	// A line that now holds another item is refused.
@@ -829,8 +860,8 @@ func TestOnlySafeLinkSchemesReachThePage(t *testing.T) {
 }
 
 func TestAFailedRefreshIsShownUntilItClears(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root reads any directory")
+	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
+		t.Skip("root reads any directory; on Windows, chmod only sets read-only")
 	}
 	f := newFixture(t)
 	pages := filepath.Join(f.root, ".gwiki", "wiki")

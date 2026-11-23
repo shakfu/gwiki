@@ -71,7 +71,7 @@ func (m *WikiModel) titleOf(page string) string {
 // viewWikiHeader is the header bar: the project, where the view is, and facts
 // about the open page.
 func (m *WikiModel) viewWikiHeader() string {
-	name := display.Line(m.w.Config.Name)
+	name := display.Line(m.w.Label())
 	if name == "" {
 		name = "wiki"
 	}

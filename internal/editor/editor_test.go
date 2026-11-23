@@ -3,6 +3,7 @@ package editor
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -10,6 +11,9 @@ import (
 // whose name contains a space.
 func fakeEditor(t *testing.T, content string) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in editor is a /bin/sh script")
+	}
 	dir := filepath.Join(t.TempDir(), "my editor")
 	if err := os.Mkdir(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -79,6 +83,9 @@ func TestVisualWinsOverEditorAndNoneIsAnError(t *testing.T) {
 }
 
 func TestOpenPassesTheLine(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in editor is a /bin/sh script")
+	}
 	dir := t.TempDir()
 	log := filepath.Join(dir, "args")
 	script := filepath.Join(dir, "ed.sh")

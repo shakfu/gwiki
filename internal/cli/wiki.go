@@ -22,8 +22,10 @@ import (
 
 func wikiHelp(a *App) {
 	a.printf("gwiki keeps a wiki of markdown pages in your project, under .gwiki/wiki.\n\n")
-	a.printf("usage: gwiki <command> [arguments]\n")
-	a.printf("       gwiki               open the wiki interface\n\n")
+	a.printf("usage: gwiki [-u] <command> [arguments]\n")
+	a.printf("       gwiki [-u]          open the wiki interface\n\n")
+	a.printf("-u, --user opens your user wiki, ~/.gwiki, in place of the project's.\n")
+	a.printf("Create it with 'gwiki -u init'.\n\n")
 	a.printf("A page is named by its path, its title, its file name, or a fragment. A task\n")
 	a.printf("is a task page, \"page:line\" for a checklist item, or a fragment of its text.\n")
 	a.printf("Every write checks that the page has not changed since it was read.\n\n")
@@ -102,10 +104,10 @@ func wikiLSP(a *App, args []string) error {
 		return fmt.Errorf("%w: lsp takes no arguments", errUsage)
 	}
 	s := lsp.New(func(root string) (*wiki.Wiki, error) {
-		if root == "" {
+		if root == "" || a.User {
 			root = a.Dir
 		}
-		p, err := wiki.Discover(root)
+		p, err := a.project(root)
 		if err != nil {
 			return nil, err
 		}
@@ -136,9 +138,18 @@ func wikiMCP(a *App, args []string) error {
 	})
 }
 
+// project locates the wiki a command works on: the user wiki under -u, else
+// the project wiki found from dir.
+func (a *App) project(dir string) (*wiki.Project, error) {
+	if a.User {
+		return wiki.User()
+	}
+	return wiki.Discover(dir)
+}
+
 // openWiki finds and opens the wiki, bringing its cache up to date.
 func (a *App) openWiki() (*wiki.Wiki, error) {
-	p, err := wiki.Discover(a.Dir)
+	p, err := a.project(a.Dir)
 	if err != nil {
 		return nil, err
 	}
@@ -179,7 +190,11 @@ func wikiInit(a *App, args []string) error {
 	if len(args) > 0 {
 		return fmt.Errorf("%w: init takes no arguments", errUsage)
 	}
-	p, err := wiki.Init(a.Dir)
+	initWiki := func() (*wiki.Project, error) { return wiki.Init(a.Dir) }
+	if a.User {
+		initWiki = wiki.InitUser
+	}
+	p, err := initWiki()
 	if err != nil {
 		return err
 	}

@@ -1,6 +1,7 @@
 package markdown
 
 import (
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -248,7 +249,7 @@ func TestCheckboxesCarryTheirLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	html := string(out)
-	if !strings.Contains(html, `data-line="5"`) || !strings.Contains(html, `<input checked="" disabled="" type="checkbox" data-line="7">`) {
+	if !strings.Contains(html, `data-line="5"`) || !strings.Contains(html, `<input checked="" data-line="7" disabled="" type="checkbox">`) {
 		t.Fatalf("HTML = %s", html)
 	}
 	if tasks := Parse([]byte(src)).Tasks; len(tasks) != 1 || tasks[0].Line != 7 {
@@ -305,5 +306,30 @@ func TestRawHTMLIsOmitted(t *testing.T) {
 	}
 	if s := string(out); strings.Contains(s, "<script") || strings.Contains(s, "&lt;script") || strings.Contains(s, "onclick") {
 		t.Fatalf("HTML = %s", s)
+	}
+}
+
+// The browser view matches a checkbox to a task by data-line. A box Parse does
+// not list, such as one in a blockquote, must not take a listed task's line.
+func TestCheckBoxesCarryTheirTaskLine(t *testing.T) {
+	src := "---\ntitle: T\n---\n\n> - [ ] quoted\n\n- [ ] real one\n- [x] real two\n"
+	out, err := HTML([]byte(src), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(out)
+	if n := strings.Count(html, "<input"); n != 3 {
+		t.Fatalf("%d checkboxes, want 3:\n%s", n, html)
+	}
+	for _, task := range Parse([]byte(src)).Tasks {
+		if !strings.Contains(html, `data-line="`+strconv.Itoa(task.Line)+`"`) {
+			t.Errorf("no checkbox for line %d (%s):\n%s", task.Line, task.Text, html)
+		}
+	}
+	if !strings.Contains(html, `data-line="5"`) {
+		t.Errorf("the quoted box does not name its own line:\n%s", html)
+	}
+	if !strings.Contains(html, `<input checked="" data-line="8"`) {
+		t.Errorf("the done box lost its state:\n%s", html)
 	}
 }

@@ -1,6 +1,6 @@
 module github.com/shakfu/gwiki
 
-go 1.26.6
+go 1.26.10
 
 require (
 	github.com/alecthomas/chroma/v2 v2.27.0

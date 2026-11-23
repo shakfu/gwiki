@@ -905,7 +905,7 @@ The notes model is deleted: `gwiki notes`, global notes, `gwiki migrate`, and th
 
 ## 18. Open questions
 
-1. **Global notes.** Decided: dropped with the notes model (section 17, "Notes removed"). There is no global wiki.
+1. **Global notes.** Decided: dropped with the notes model (section 17, "Notes removed"). Superseded 2026-09-28 by a user wiki opened with `-u`; see `user-wiki.md`.
 
 2. **Checklist items in other files.** Should `tasks` also collect `- [ ]` items from markdown outside `.gnotes/wiki`, such as `TODO.md`?
 

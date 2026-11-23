@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -192,6 +193,22 @@ func TestWikiDoesNotPrintControlCharacters(t *testing.T) {
 	}
 }
 
+// Link text and task text reach tables unstyled; they are cleaned too.
+func TestWikiDoesNotPrintControlCharactersFromLinksOrTasks(t *testing.T) {
+	f := wikiFixture(t)
+	evil := "\x1b]52;c;aGk=\x07"
+	path := filepath.Join(f.dir, ".gwiki", "wiki", "evil-body.md")
+	if err := os.WriteFile(path, []byte("# Body\n\n[[Nowhere"+evil+"]]\n\n- [ ] do"+evil+" it\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"links", "evil-body"}, {"show", "evil-body"}, {"check"}, {"tasks"}} {
+		out, errOut, _ := f.run(args...)
+		if bytes.ContainsAny([]byte(out+errOut), "\x1b\x07") {
+			t.Errorf("gwiki %s printed a control character: %q", strings.Join(args, " "), out+errOut)
+		}
+	}
+}
+
 func TestWikiNewEditAndTag(t *testing.T) {
 	f := wikiFixture(t)
 
@@ -216,16 +233,19 @@ func TestWikiNewEditAndTag(t *testing.T) {
 		t.Fatalf("edit --stdin:\n%s", page)
 	}
 
-	// The editor gets the whole page and its changes are written back.
-	script := filepath.Join(t.TempDir(), "editor.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf 'Appended in the editor.\\n' >> \"$1\"\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("VISUAL", "") // $VISUAL wins over $EDITOR
-	t.Setenv("EDITOR", script)
-	f.mustRun("edit", "parser notes")
-	if page := readPage(t, f, "lexer/parser-notes"); !strings.HasSuffix(page, "From stdin.\nAppended in the editor.\n") || !strings.HasPrefix(page, "---\n") {
-		t.Fatalf("edit in $EDITOR:\n%s", page)
+	// The editor gets the whole page and its changes are written back. The
+	// stand-in editor is a /bin/sh script.
+	if runtime.GOOS != "windows" {
+		script := filepath.Join(t.TempDir(), "editor.sh")
+		if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf 'Appended in the editor.\\n' >> \"$1\"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("VISUAL", "") // $VISUAL wins over $EDITOR
+		t.Setenv("EDITOR", script)
+		f.mustRun("edit", "parser notes")
+		if page := readPage(t, f, "lexer/parser-notes"); !strings.HasSuffix(page, "From stdin.\nAppended in the editor.\n") || !strings.HasPrefix(page, "---\n") {
+			t.Fatalf("edit in $EDITOR:\n%s", page)
+		}
 	}
 
 	if out := f.mustRun("tag", "lexer/parser-notes", "Lexer", "#extra"); !strings.Contains(out, "#extra #lexer #parser") {
@@ -542,6 +562,9 @@ func TestWikiReportsSkippedFiles(t *testing.T) {
 }
 
 func TestWikiEditKeepsTheTextOnAConflict(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in editor is a /bin/sh script")
+	}
 	f := wikiFixture(t)
 	page := filepath.Join(f.dir, ".gwiki", "wiki", "index.md")
 	// The editor saves the text, while someone else saves the page.
@@ -590,5 +613,38 @@ func TestWikiRefusesStrayArguments(t *testing.T) {
 	}
 	if out := f.mustRun("tag", "index", "--", "-odd"); !strings.Contains(out, "#-odd") {
 		t.Errorf("tag after --:\n%s", out)
+	}
+}
+
+// -u opens the user wiki, ~/.gwiki; nothing reaches it without -u (U1).
+func TestUserWikiOnlyWithTheFlag(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	f := wikiFixture(t)
+
+	if _, errOut, code := f.run("-u", "ls"); code == 0 || !strings.Contains(errOut, "gwiki -u init") {
+		t.Fatalf("-u before init: %d %s", code, errOut)
+	}
+	if out := f.mustRun("-u", "init"); !strings.Contains(out, filepath.Join(home, ".gwiki", "wiki")) {
+		t.Fatalf("-u init: %s", out)
+	}
+	f.mustRun("--user", "new", "Private idea", "-m", "Mine.")
+	if out := f.mustRun("-u", "ls"); !strings.Contains(out, "Private idea") || strings.Contains(out, "Design sketch") {
+		t.Fatalf("-u ls:\n%s", out)
+	}
+	// The project in the working directory is unchanged, and does not list it.
+	if out := f.mustRun("ls"); strings.Contains(out, "Private idea") || !strings.Contains(out, "Design sketch") {
+		t.Fatalf("ls in the project:\n%s", out)
+	}
+
+	// Without -u, a directory with no project wiki does not reach the user wiki.
+	elsewhere := &fixture{t: t, dir: filepath.Join(home, "elsewhere"), now: f.now}
+	os.MkdirAll(elsewhere.dir, 0o755)
+	if _, errOut, code := elsewhere.run("new", "Stray", "-m", "x"); code == 0 || !strings.Contains(errOut, "no gwiki found") {
+		t.Fatalf("new outside a project: %d %s", code, errOut)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".gwiki", "wiki", "stray.md")); !os.IsNotExist(err) {
+		t.Fatal("a command without -u wrote into the user wiki")
 	}
 }

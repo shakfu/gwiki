@@ -539,14 +539,15 @@ func (e *Editor) toggleCheckbox() {
 		e.fail("no checklist item on this line")
 		return
 	}
-	// The item's own box follows the bullet; the indent is ASCII, so bytes are runes.
-	col := len(indent) + 2
-	box := "[x]"
-	if line[col+1] != ' ' {
-		box = "[ ]"
+	// The item's own box, after the bullet: a "[ ]" later in the text is not.
+	at := len(indent) + len("- [")
+	box := "x"
+	if line[at] != ' ' {
+		box = " "
 	}
+	col := len([]rune(line[:at]))
 	e.change(func() {
-		e.Buf.Replace(Pos{e.Cursor.Line, col}, Pos{e.Cursor.Line, col + 3}, box)
+		e.Buf.Replace(Pos{e.Cursor.Line, col}, Pos{e.Cursor.Line, col + 1}, box)
 	})
 }
 

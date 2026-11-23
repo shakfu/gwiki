@@ -118,8 +118,9 @@ func (m *WikiModel) offerDraft() {
 		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(answer)), "y") {
 			m.edit.ed.Load(text)
 			m.edit.ed.Dirty = true
-			// The draft's own base, so :w over a page changed since conflicts.
-			m.edit.base = base
+			// The draft was edited against its own base; a page changed since
+			// then is a conflict at :w, not overwritten.
+			m.edit.base, m.edit.outside = base, stale != ""
 			m.setStatus("draft restored; :w writes it")
 			return nil
 		}
@@ -146,17 +147,17 @@ func (m *WikiModel) writeDraft() error {
 	if err := os.MkdirAll(m.draftsDir(), 0o755); err != nil {
 		return fmt.Errorf("save a draft: %w", err)
 	}
-	if err := writeAtomic(filepath.Join(m.draftsDir(), draftName(e.page)), []byte(e.base+"\n"+e.ed.Text())); err != nil {
+	if err := replaceFile(filepath.Join(m.draftsDir(), draftName(e.page)), []byte(e.base+"\n"+e.ed.Text())); err != nil {
 		return fmt.Errorf("save a draft: %w", err)
 	}
 	e.draftPending = false
 	return nil
 }
 
-// writeAtomic writes a synced temporary file beside name and renames it over
-// name, so an interrupted write leaves the previous file whole.
-func writeAtomic(name string, data []byte) error {
-	f, err := os.CreateTemp(filepath.Dir(name), ".draft-*")
+// replaceFile writes data to a synced temporary file and renames it over
+// name, so a crash leaves the old draft or the new one, never half of one.
+func replaceFile(name string, data []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(name), "."+filepath.Base(name)+".*")
 	if err != nil {
 		return err
 	}
@@ -209,11 +210,9 @@ func (m *WikiModel) editSave(force bool) (string, error) {
 	return warn.String(), nil
 }
 
-// editQuit leaves gwiki, as :q leaves vim.
+// editQuit leaves gwiki, as :q leaves vim. The editor has already refused
+// a quit that would lose changes; with force it discards them.
 func (m *WikiModel) editQuit(force bool) error {
-	if m.edit.ed.Dirty && !force {
-		return errors.New("the page has unsaved changes; :w writes them, :q! discards them")
-	}
 	if m.edit.ed.Dirty {
 		m.dropDraft()
 	}
@@ -463,11 +462,20 @@ func (m *WikiModel) keyContent(msg tea.KeyMsg) {
 	}
 	e.ed.Width, e.ed.Height = m.bufferWidth(), m.contentHeight()
 	// Fast typing and pastes arrive as one message holding several runes. A
-	// paste of one rune is named "[x]", and terminals paste newlines as \r.
-	if msg.Type == tea.KeyRunes && (len(msg.Runes) > 1 || msg.Paste) {
+	// paste of one rune is still a paste, and terminals send its line breaks as
+	// \r, which the buffer would keep.
+	if msg.Type == tea.KeyRunes && (msg.Paste || len(msg.Runes) > 1) {
 		text := strings.ReplaceAll(string(msg.Runes), "\r\n", "\n")
-		for _, r := range strings.ReplaceAll(text, "\r", "\n") {
-			e.ed.Key(string(r))
+		text = strings.ReplaceAll(text, "\r", "\n")
+		if msg.Paste && e.ed.Mode != vim.Insert && e.ed.Mode != vim.Replace && e.ed.Mode != vim.Command {
+			// As in vim: pasted text is inserted at the cursor, not run as
+			// commands.
+			e.ed.Mode = vim.Normal
+			e.ed.ReplaceText(e.ed.Cursor, e.ed.Cursor, text)
+		} else {
+			for _, r := range text {
+				e.ed.Key(string(r))
+			}
 		}
 	} else {
 		e.ed.Key(k)

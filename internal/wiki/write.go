@@ -104,12 +104,14 @@ func (w Warnings) String() string {
 
 // fileWrite is one change in a batch: new content for a page, or its removal
 // when Data is nil. Base is the hash the writer read, or empty for a page that
-// must not exist yet. A new page takes the file mode of From, when set.
+// must not exist yet.
 type fileWrite struct {
 	Page string
 	Base string
 	Data []byte
-	From string
+
+	// ModeOf is the page whose mode a new page takes; a move sets it.
+	ModeOf string
 }
 
 // Read returns a page's source and its hash.
@@ -232,14 +234,15 @@ func (w *Wiki) commit(writes []fileWrite) (Warnings, error) {
 	for i, fw := range writes {
 		if fw.Data != nil {
 			modeOf := pageRel(fw.Page)
-			if fw.From != "" {
-				modeOf = pageRel(fw.From)
+			if fw.ModeOf != "" {
+				modeOf = pageRel(fw.ModeOf)
 			}
 			if temps[i], err = stage(root, pageRel(fw.Page), modeOf, fw.Data); err != nil {
 				return Warnings{}, err
 			}
 		}
 	}
+	afterStage()
 	done := 0
 	for i, fw := range writes {
 		if beforeRename != nil {
@@ -302,6 +305,10 @@ func checkBase(root *os.Root, fw fileWrite) error {
 	}
 	return nil
 }
+
+// afterStage runs between staging and the renames; a test writes there as an
+// outside editor would.
+var afterStage = func() {}
 
 // beforeRename, when set by a test, runs before each page is checked again and
 // replaced.

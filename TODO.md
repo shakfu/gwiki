@@ -2,105 +2,19 @@
 
 IDs refer to `REVIEW.md` (commit `2cdc3d9`, 2026-09-27), which holds the evidence and reproduction steps.
 
-## Critical
-
-## High
-
-## Medium
-
-- [x] W4. `Promote` slices before it checks bounds; a stale `Task` panics. `internal/wiki/ops.go:443,449`
-
-- [x] W5. `SetTaskStatus` trusts `Task.Box` alone; a stale task ticks the wrong item. `internal/wiki/ops.go:420-428`
-
-- [x] W6. A move does not rewrite a page's wiki links to itself; `--dry-run` does not report it. `internal/wiki/move.go:110,154`
-
-- [x] W7. A move of an untitled page breaks `[[title]]` links. `internal/wiki/move.go:85-86`
-
-- [x] W8. `SetBody`, `Remove`, `Tag`, `SetTaskStatus` (task page) and `Fix` take no base hash; the README now says so. `internal/wiki/ops.go:235-325,402-410`, `internal/wiki/fix.go:202-215` Closed without change: no caller holds a base to pass. `SetBody`, `Tag`, `Remove` state their whole result and check the hash they read; task edits and `Fix` now re-check the item or link.
-
-- [x] W9. `Open` deletes the cache on any connect error, including lock timeout. `internal/wiki/cache.go:113-118`
-
-- [x] W10. The write check does not cover writers outside gwiki; re-check before each rename. `internal/wiki/write.go:88-112`
-
-- [x] W11. Change detection uses size and mtime only; `rsync -t`/`tar` edits are never re-indexed. `internal/wiki/refresh.go:86`
-
-- [x] S2. The browser view matches checkboxes to tasks by index; a blockquoted task shifts them. `internal/webwiki/assets/app.js:286-291`
-
-- [x] S3. The language server keys buffers by the client's URI string; unsaved-changes guard on rename misses. `internal/lsp/server.go:350`, `features.go:146,610`
-
-- [x] S4. `javascript:`, `data:`, `vbscript:` targets reach the page via autolinks and `href`. Allowlist `http`, `https`, `mailto`. `internal/webwiki/api.go:221-222`, `app.js:322`
-
-- [x] S5. The web view and MCP apply different rules to the same write (line endings, task text check, empty base). `internal/webwiki/api.go`, `internal/mcp/wiki.go`
-
-- [x] S6. `documentSymbol` returns line -1 and an empty name for an empty heading. `internal/lsp/features.go:287-290`
-
-- [x] T6. `ctrl-o` in insert mode breaks undo. `internal/vim/editor.go:296-301`
-
-- [x] T7. Completion bypasses the undo log and the draft hook. `internal/tui/wiki_edit.go:336-344`
-
-- [x] T8. The CLI prints escape sequences from page content in `links`, `show`, `check`, `tasks`. `internal/cli/format.go:85-88`
-
-- [x] T9. The preview prints a raw `due` value. `internal/tui/wiki_view.go:322-323`, `wiki_lists.go:199-212`
-
-- [x] T10. An exclusive motion with an empty range deletes one character (`d0`, `dh`, `db` at column 0). `internal/vim/motion.go:201-214`
-
-- [x] T11. `.` records keys that changed nothing; visual-mode operators repeat as nothing. `internal/vim/normal.go:38-41,105-107,226-231`
-
-- [x] T12. `c` takes two undo steps. `internal/vim/normal.go:424-440`
-
-- [x] T13. A pasted `\r` is saved literally; a one-rune paste is dropped. `internal/tui/wiki_edit.go:353,421-427`
-
-- [x] T14. The buffer wraps by rune count, not by column (CJK, tabs). `internal/vim/motion.go:586-607`
-
 ## Low
-
-- [ ] P2. No CI. Add one running `make check`, `staticcheck`, `govulncheck`. `Makefile:60`
-
-- [ ] P3. Unused symbols: `cursorBefore`, `cursorAfter`, `(*Buffer).end`, `lastReg`. `internal/vim/buffer.go:46,100`, `editor.go:98`
 
 - [ ] P4. Indirect dependencies lag: `golang.org/x/text` v0.3.8, `go-runewidth` v0.0.16.
 
-- [ ] P5. Docs describe behaviour the code lacks: query-refresh claim (`internal/wiki/project.go:1-6`). (`gwiki edit` now keeps the text on a conflict, so its comment holds.)
-
-- [ ] W12. No `fsync` of the parent directory after rename or remove. `write.go:105,149`
-
-- [ ] W13. A moved page gets mode 0644; the empty source directory stays. `write.go:126-129`, `move.go:193`
-
-- [ ] W14. A page deleted between scan and parse fails the whole refresh. `refresh.go:100-104`
-
-- [ ] W15. Rename detection matches on content hash alone; `renames` is never pruned. `refresh.go:151`
-
-- [ ] W16. `git` runs without `core.quotePath=false`; non-ASCII pages get no author or date. `overview.go:110,133`
-
 - [ ] W17. The tokenizer splits on combining marks; FTS5 does not. NFD queries find nothing. `search/search.go:78`
-
-- [ ] W18. `FindTask` treats any `text:digits` as `page:line`. `ops.go:331-347`
-
-- [ ] W19. `_txlock=immediate` makes read-only transactions take the write lock. `cache.go:155`, `ops.go:490`
-
-- [ ] W20. A directory link indexed before its `README.md` exists stays `kind=file`. `nested.go:45-63`
-
-- [ ] W21. An entity reference in a markdown link destination breaks resolution: `[f](no&#95;such.md)` splits at `#` into target `no&`. goldmark's renderer decodes entities, so `check` and the rendered `href` disagree. A fix must also decode in `checkDest`. Not in `REVIEW.md`. `markdown/markdown.go` (`markdownLink`), `wiki/move.go:280`
-
-- [ ] S7. `"id": null` is answered as a request; `jsonrpc` is not checked. `lsp/server.go:169`
-
-- [ ] S8. A second `initialize` succeeds and leaks the first cache handle. `lsp/server.go:291`
-
-- [ ] S9. No panic recovery in LSP or MCP. `lsp/server.go:192`, `mcp/mcp.go:192`
 
 - [ ] S10. Web server sets only `ReadHeaderTimeout`; no `IdleTimeout`, no graceful shutdown. `webwiki/server.go:205`
 
-- [ ] S11. `/api/file` serves any repository file under 1 MB, including `.env`, `.git/config`, `.gwiki/cache.db`. `webwiki/api.go:289-317`
-
 - [ ] S12. Web errors return absolute paths. `webwiki/api.go:303`
-
-- [x] S13. `checkDisk` drops `Refresh` errors; live updates stop silently. `webwiki/server.go:226-233`
 
 - [ ] S14. MCP has no frame size limit. `mcp/mcp.go:144-159`
 
 - [ ] S15. A malformed `%` escape in the hash throws outside the `try`. `webwiki/assets/app.js:161-169`
-
-- [ ] S16. Comment says raw HTML is escaped; it is omitted. `markdown/html.go:32`
 
 - [ ] T15. `:s` replaces on the matched substring, so `\B` and similar assertions fail. `vim/ex.go:295`
 
@@ -108,21 +22,9 @@ IDs refer to `REVIEW.md` (commit `2cdc3d9`, 2026-09-27), which holds the evidenc
 
 - [ ] T17. Only `/` separates `:s` parts. `vim/ex.go:129`
 
-- [ ] T18. `r<tab>` writes `t`; `f<tab>` searches for `t`; `3r<enter>` writes 3 newlines. `vim/normal.go:561-568`
-
-- [ ] T19. On `- [x] done [ ] other`, the toggle changes the second box. `vim/editor.go:479`
-
-- [ ] T20. The draft write is not atomic. (Its errors are now reported and retried.) `tui/wiki_edit.go:132-136`
-
-- [ ] T21. A restored stale draft takes the current hash, so `:w` overwrites the newer page. `tui/wiki_edit.go:108-109`
-
-- [ ] T22. `gwiki tag other --json` adds the tag `--json`. `cli/wiki.go:862-875`
-
 - [ ] T23. `orphans` and `tasks` ignore extra arguments; `search -n -5` is accepted. `cli/wiki.go:555-560`
 
 - [ ] T24. `Refresh` and the draft write run inside `Update` each second. `tui/wiki.go:492-494`
-
-- [ ] W22. `markdown.Parse` gives an empty heading line 0 and an empty slug; heading completion may offer it. `internal/lsp/features.go` (~447)
 
 - [ ] T26. `.` after a completion replays `ctrl-n`, not the inserted text. `internal/tui/wiki_edit.go`
 
@@ -134,11 +36,9 @@ IDs refer to `REVIEW.md` (commit `2cdc3d9`, 2026-09-27), which holds the evidenc
 
 ## Design
 
-- [ ] D1. Move validation into `internal/wiki`: `Task` carries its text and is re-checked, mutators take a base hash, one symlink-safe open, link schemes classified once. Closes W4, W5, W8, S5 and part of S1, S4.
+- [ ] D1. Move validation into `internal/wiki`: `Task` carries its text and is re-checked, mutators take a base hash, one symlink-safe open, link schemes classified once. The individual fixes (W4, W5, W8, S5) are done; this is the structural cleanup that keeps them from regressing.
 
 - [ ] D2. `WikiModel` shares `cursor`, `scroll` and `input` across screens; an invariant is kept by hand. `internal/tui/wiki.go:61-125`
-
-- [ ] D3. Two `:w`/`:q`/`:wq` implementations with different unsaved-change handling. `internal/tui/commands.go:129-163`, `internal/vim/ex.go:176-204`
 
 - [ ] D4. Duplication and dead code: `plural`, `itoa`, aligned tables, `$VISUAL`/`$EDITOR` lookup, `_ = runes`, `ansiBlue`, `runNamed`. See `REVIEW.md` D4.
 

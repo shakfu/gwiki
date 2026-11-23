@@ -1,6 +1,9 @@
 # gwiki
 
 BIN     := gwiki
+# Pinned so a local run and CI report the same findings.
+STATICCHECK := honnef.co/go/tools/cmd/staticcheck@v0.8.1
+GOVULNCHECK := golang.org/x/vuln/cmd/govulncheck@v1.8.0
 CMD     := ./cmd/gwiki
 # A clean checkout of a tagged commit stamps its tag, without the v; otherwise
 # the version in cmd/gwiki/main.go stands.
@@ -56,8 +59,20 @@ tidy: ## prune and verify go.mod
 	@go mod tidy
 	@go mod verify
 
+.PHONY: staticcheck
+staticcheck: ## static analysis, with and without the browser view
+	@go run $(STATICCHECK) ./...
+	@go run $(STATICCHECK) -tags noweb ./...
+
+.PHONY: vuln
+vuln: ## report known vulnerabilities in reachable code
+	@go run $(GOVULNCHECK) ./...
+
 .PHONY: check
-check: lint test ## everything CI runs
+check: lint test ## lint and test, offline
+
+.PHONY: ci
+ci: check staticcheck vuln ## everything CI runs
 
 .PHONY: clean
 clean: ## remove build and coverage artifacts
