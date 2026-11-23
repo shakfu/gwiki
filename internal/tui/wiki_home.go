@@ -158,7 +158,7 @@ func (m *WikiModel) latestSummary() string {
 	if o == nil {
 		return ""
 	}
-	s := plural(o.pages, "page")
+	s := display.Plural(o.pages, "page")
 	for _, c := range o.recent {
 		if c.Uncommitted {
 			return s + " · ● uncommitted"
@@ -272,7 +272,7 @@ func (m *WikiModel) statsColumns() [2][]homeRow {
 		left = append(left, rowsOf(hubs, lw, actions)...)
 	}
 
-	header(&right, "Directories", plural(o.pages, "page"))
+	header(&right, "Directories", display.Plural(o.pages, "page"))
 	dirs := &table{cols: []column{{shrink: 1, min: 8}, {right: true}}}
 	var actions []func()
 	for _, d := range o.dirs {

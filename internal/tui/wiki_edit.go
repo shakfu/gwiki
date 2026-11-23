@@ -78,7 +78,7 @@ func (m *WikiModel) openBuffer(page string, src []byte, hash string) {
 	ed := vim.New(string(src))
 	ed.Width, ed.Height = m.bufferWidth(), m.contentHeight()
 	ed.History = m.commands
-	ed.Unnamedplus = m.w.Config.Clipboard == "unnamedplus"
+	ed.Unnamedplus = m.w.Config.Unnamedplus()
 	m.edit = &editing{ed: ed, page: page, base: hash}
 	ed.Hooks = vim.Hooks{
 		Save:   m.editSave,
@@ -97,7 +97,7 @@ func (m *WikiModel) openBuffer(page string, src []byte, hash string) {
 		Complete: func(previous bool) {
 			m.editComplete(previous)
 		},
-		Clipboard: func(text string) { m.copy(text) },
+		Clipboard: func(text string) error { return m.copy(text) },
 	}
 	m.checkLinks()
 	m.offerDraft()
@@ -252,13 +252,6 @@ func (m *WikiModel) checkLinks() {
 			e.broken["[["+l.Written()[2:len(l.Written())-2]+"]]"] = true
 		}
 	}
-}
-
-func plural(n int, what string) string {
-	if n == 1 {
-		return "1 " + what
-	}
-	return fmt.Sprintf("%d %ss", n, what)
 }
 
 // ---------------------------------------------------------------- completion

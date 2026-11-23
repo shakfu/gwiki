@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"runtime"
 
+	"github.com/shakfu/gwiki/internal/session"
 	"github.com/shakfu/gwiki/internal/webwiki"
 	"github.com/shakfu/gwiki/internal/wiki"
 )
@@ -97,10 +98,8 @@ display. The address is printed either way, and --open forces the attempt.
 // it, and on a headless box the opener can hang holding the terminal.
 func hasDesktop(env func(string) string) bool {
 	// An SSH session means the terminal is here and the machine is elsewhere.
-	for _, name := range []string{"SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"} {
-		if env(name) != "" {
-			return false
-		}
+	if session.Remote(env) {
+		return false
 	}
 	// Most runners set CI; none of them want a browser.
 	if env("CI") != "" {

@@ -6,7 +6,18 @@
 // and a newline can forge rows in a table.
 package display
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
+
+// Plural is n and a word, with an s when n is not one: "1 line", "3 lines".
+func Plural(n int, word string) string {
+	if n == 1 {
+		return "1 " + word
+	}
+	return strconv.Itoa(n) + " " + word + "s"
+}
 
 // TabWidth is the columns between tab stops, in the reader and the editor.
 const TabWidth = 4

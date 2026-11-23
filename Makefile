@@ -2,7 +2,7 @@
 
 BIN     := gwiki
 # Pinned so a local run and CI report the same findings.
-STATICCHECK := honnef.co/go/tools/cmd/staticcheck@v0.8.1
+STATICCHECK := honnef.co/go/tools/cmd/staticcheck@v0.8.2
 GOVULNCHECK := golang.org/x/vuln/cmd/govulncheck@v1.8.0
 CMD     := ./cmd/gwiki
 # A clean checkout of a tagged commit stamps its tag, without the v; otherwise

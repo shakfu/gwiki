@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/shakfu/gwiki/internal/display"
 	"github.com/shakfu/gwiki/internal/wiki"
 )
 
@@ -66,7 +67,7 @@ func init() {
 				}
 			}
 			if broken > 0 {
-				return fmt.Errorf("%s in this page", plural(broken, "broken link"))
+				return fmt.Errorf("%s in this page", display.Plural(broken, "broken link"))
 			}
 			return nil
 		}},
@@ -83,7 +84,7 @@ func init() {
 			m.reloadAll()
 			return nil
 		}},
-		{names: []string{"mouse"}, help: "turn mouse capture on, or off for the terminal's text selection", run: func(m *WikiModel, _ string) error {
+		{names: []string{"mouse"}, help: "turn mouse capture off, for the terminal's text selection, or on", run: func(m *WikiModel, _ string) error {
 			m.setMouse(!m.mouseOn)
 			return nil
 		}},

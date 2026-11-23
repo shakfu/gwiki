@@ -42,15 +42,18 @@ type Config struct {
 	Name string `json:"name"`
 
 	// Clipboard "unnamedplus" sends every yank and delete in the terminal
-	// editor to the system clipboard, as vim's clipboard=unnamedplus does.
-	Clipboard string `json:"clipboard,omitempty"`
+	// editor to the system clipboard, as vim's clipboard=unnamedplus does, and
+	// "" keeps them in the editor. Unset is "unnamedplus"; see Unnamedplus.
+	Clipboard *string `json:"clipboard,omitempty"`
 
-	// Mouse starts the terminal interface with mouse capture on.
-	Mouse bool `json:"mouse,omitempty"`
+	// Mouse false starts the terminal interface with mouse capture off; unset
+	// is on. See MouseOn.
+	Mouse *bool `json:"mouse,omitempty"`
 
-	// CopyOnSelect copies a mouse selection in the terminal interface to the
-	// system clipboard when the button is released.
-	CopyOnSelect bool `json:"copy_on_select,omitempty"`
+	// CopyOnSelect false stops the terminal interface copying a mouse
+	// selection to the system clipboard when the button is released; unset
+	// is on. See CopyOnSelectOn.
+	CopyOnSelect *bool `json:"copy_on_select,omitempty"`
 }
 
 // Project is a located wiki.
@@ -211,8 +214,10 @@ func load(root, repoFrom string) (*Project, error) {
 		if err := json.Unmarshal(raw, &p.Config); err != nil {
 			return nil, fmt.Errorf("parse %s: %w", filepath.Join(root, DirName, configFile), err)
 		}
-		if err := checkClipboard(p.Config.Clipboard); err != nil {
-			return nil, fmt.Errorf("%s: %w", filepath.Join(root, DirName, configFile), err)
+		if c := p.Config.Clipboard; c != nil {
+			if err := checkClipboard(*c); err != nil {
+				return nil, fmt.Errorf("%s: %w", filepath.Join(root, DirName, configFile), err)
+			}
 		}
 	case !os.IsNotExist(err):
 		return nil, err
@@ -233,6 +238,18 @@ func load(root, repoFrom string) (*Project, error) {
 	}
 	return p, nil
 }
+
+// Unnamedplus reports whether yanks and deletes reach the system clipboard:
+// unless "clipboard" is "".
+func (c Config) Unnamedplus() bool { return c.Clipboard == nil || *c.Clipboard == "unnamedplus" }
+
+// MouseOn reports whether the interface starts with mouse capture: unless
+// "mouse" is false.
+func (c Config) MouseOn() bool { return c.Mouse == nil || *c.Mouse }
+
+// CopyOnSelectOn reports whether letting go of a mouse selection copies it:
+// unless "copy_on_select" is false.
+func (c Config) CopyOnSelectOn() bool { return c.CopyOnSelect == nil || *c.CopyOnSelect }
 
 func checkClipboard(c string) error {
 	if c != "" && c != "unnamedplus" {
@@ -260,11 +277,31 @@ func UserConfigPath(getenv func(string) string) (string, error) {
 	return filepath.Join(dir, "gwiki", configFile), nil
 }
 
+// userConfig is the per-user config.json. A field left out leaves the
+// project's value.
+type userConfig struct {
+	Clipboard    *string `json:"clipboard"`
+	Mouse        *bool   `json:"mouse"`
+	CopyOnSelect *bool   `json:"copy_on_select"`
+}
+
+// DefaultUserConfig is a per-user config.json holding every option at its
+// default, to edit. Since each value is set, it overrides the project's.
+func DefaultUserConfig() []byte {
+	var c Config
+	clipboard, mouse, copyOnSelect := "", c.MouseOn(), c.CopyOnSelectOn()
+	if c.Unnamedplus() {
+		clipboard = "unnamedplus"
+	}
+	raw, _ := json.MarshalIndent(userConfig{&clipboard, &mouse, &copyOnSelect}, "", "  ")
+	return append(raw, '\n')
+}
+
 // UseUserConfig reads the per-user config at path over the project's: a
-// value set there wins, so "clipboard": "" or "mouse": false turns the
-// project's off. A missing
-// file changes nothing. The file holds only
-// personal options, so an unknown field, such as name, is an error.
+// value set there wins, so "clipboard": "", "mouse": false or
+// "copy_on_select": false turns the project's off. A missing file changes
+// nothing. The file holds only personal options, so an unknown field, such as
+// name, is an error.
 func (p *Project) UseUserConfig(path string) error {
 	raw, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -273,11 +310,7 @@ func (p *Project) UseUserConfig(path string) error {
 	if err != nil {
 		return err
 	}
-	var u struct {
-		Clipboard    *string `json:"clipboard"`
-		Mouse        *bool   `json:"mouse"`
-		CopyOnSelect *bool   `json:"copy_on_select"`
-	}
+	var u userConfig
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&u); err != nil {
@@ -287,13 +320,13 @@ func (p *Project) UseUserConfig(path string) error {
 		if err := checkClipboard(*u.Clipboard); err != nil {
 			return fmt.Errorf("%s: %w", path, err)
 		}
-		p.Config.Clipboard = *u.Clipboard
+		p.Config.Clipboard = u.Clipboard
 	}
 	if u.Mouse != nil {
-		p.Config.Mouse = *u.Mouse
+		p.Config.Mouse = u.Mouse
 	}
 	if u.CopyOnSelect != nil {
-		p.Config.CopyOnSelect = *u.CopyOnSelect
+		p.Config.CopyOnSelect = u.CopyOnSelect
 	}
 	return nil
 }

@@ -80,11 +80,6 @@ type command struct {
 	help string
 
 	run func(*App, []string) error
-
-	// runNamed replaces run for commands whose alias carries meaning, such as
-	// "done" and "doing" both being the status command. It receives the name
-	// the user actually typed.
-	runNamed func(*App, string, []string) error
 }
 
 // A commandTable is a set of commands and the prefix of their usage lines.
@@ -115,7 +110,7 @@ func init() {
 		cmdWikiCheck, cmdWikiOrphans, cmdWikiTasks,
 		cmdWikiNew, cmdWikiEdit, cmdWikiMove, cmdWikiRemove, cmdWikiExport, cmdWikiTag, cmdWikiUntag,
 		cmdWikiDone, cmdWikiDoing, cmdWikiReopen, cmdWikiPromote,
-		cmdWikiUI, cmdWikiServe, cmdWikiMCP, cmdWikiLSP, cmdWikiCache,
+		cmdWikiUI, cmdWikiServe, cmdWikiMCP, cmdWikiLSP, cmdWikiCache, cmdWikiConfig,
 		helpCommand(wikiHelp, &wikiTable),
 	})
 }
@@ -168,12 +163,7 @@ func (a *App) dispatch(t *commandTable, args []string) int {
 		}
 	}
 
-	run := c.run
-	if c.runNamed != nil {
-		run = func(a *App, rest []string) error { return c.runNamed(a, name, rest) }
-	}
-
-	if err := run(a, args[1:]); err != nil {
+	if err := c.run(a, args[1:]); err != nil {
 		if errors.Is(err, errUsage) {
 			// A detail beyond the bare usage error, such as the flag package's
 			// "flag provided but not defined", is shown first.

@@ -60,7 +60,7 @@ func newWikiFixture(t *testing.T) *wikiFixture {
 		t.Fatal(err)
 	}
 	f.m.getenv = func(string) string { return "" }
-	f.m.copy = func(string) {}
+	f.m.copy = func(string) error { return nil }
 	// Programs run at once, without the terminal.
 	f.m.exec = func(cmd *exec.Cmd, done tea.ExecCallback) tea.Cmd {
 		return func() tea.Msg { return done(cmd.Run()) }
@@ -1146,7 +1146,7 @@ func TestWikiEditorStatusKeepsItsFields(t *testing.T) {
 func TestWikiEditorCopiesToTheClipboard(t *testing.T) {
 	f := newWikiFixture(t)
 	var copied string
-	f.m.copy = func(text string) { copied = text }
+	f.m.copy = func(text string) error { copied = text; return nil }
 	f.m.focus = focusContent
 	f.press("\"+yy")
 	if copied != "# Home\n" {

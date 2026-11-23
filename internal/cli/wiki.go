@@ -94,6 +94,16 @@ inside the project:
 	cmdWikiLSP = &command{name: "lsp", summary: "serve the wiki to an editor over the Language Server Protocol", run: wikiLSP,
 		help: `Speaks LSP on standard input and output, started by an editor. See the
 README for Neovim, Helix and Vim configuration.`}
+	cmdWikiConfig = &command{name: "config", args: "[--path]", summary: "print the default per-user config, or where it goes", run: wikiConfig,
+		help: `Prints a per-user config.json with every option at its default, to redirect
+into the file and edit:
+
+    gwiki config > "$(gwiki config --path)"
+
+--path prints where the interface reads it: gwiki/config.json in
+$XDG_CONFIG_HOME, else in ~/.config, or in %AppData% on Windows. Each value in
+the file overrides the project's .gwiki/config.json, so delete the lines you
+want the project to decide.`}
 	cmdWikiCache = &command{name: "cache", args: "--rebuild", summary: "delete the cache and index every page again", run: wikiCache}
 )
 
@@ -207,7 +217,7 @@ func wikiInit(a *App, args []string) error {
 	if err != nil {
 		return err
 	}
-	a.printf("wiki at %s (%s)\n", p.PagesPath(), plural(len(pages), "page"))
+	a.printf("wiki at %s (%s)\n", p.PagesPath(), display.Plural(len(pages), "page"))
 	return nil
 }
 
@@ -520,16 +530,16 @@ func wikiCheck(a *App, args []string) error {
 		// An error, so the exit status is 1 for scripts and CI.
 		var failed []string
 		if len(broken) > 0 {
-			failed = append(failed, plural(len(broken), "broken link"))
+			failed = append(failed, display.Plural(len(broken), "broken link"))
 		}
 		if len(skipped) > 0 {
-			failed = append(failed, plural(len(skipped), "skipped file"))
+			failed = append(failed, display.Plural(len(skipped), "skipped file"))
 		}
 		if len(failed) > 0 {
 			return errors.New(strings.Join(failed, ", "))
 		}
 		if len(drifted) > 0 && *strict {
-			return errors.New(plural(len(drifted), "drifted line anchor"))
+			return errors.New(display.Plural(len(drifted), "drifted line anchor"))
 		}
 		if !*asJSON {
 			a.printf("no broken links\n")
@@ -612,7 +622,7 @@ func (a *App) fixLinks(w *wiki.Wiki, first bool) error {
 		a.printf("%s  %s -> %s\n", a.style(ansiGreen, "fixed"), l.Written(), display.Line(offers[choice].New))
 	}
 	if fixed > 0 {
-		a.printf("%s\n", plural(fixed, "link")+" fixed")
+		a.printf("%s\n", display.Plural(fixed, "link")+" fixed")
 	}
 	return nil
 }
@@ -705,7 +715,7 @@ func wikiCache(a *App, args []string) error {
 		if err != nil {
 			return err
 		}
-		a.printf("rebuilt %s from %s\n", w.Cache(), plural(len(pages), "page"))
+		a.printf("rebuilt %s from %s\n", w.Cache(), display.Plural(len(pages), "page"))
 		return nil
 	})
 }
@@ -879,7 +889,7 @@ func wikiExport(a *App, args []string) error {
 		if *asJSON {
 			return a.writeJSON(res)
 		}
-		a.printf("exported %s and %s to %s, rewriting %s\n", plural(res.Pages, "page"), plural(res.Files, "other file"), display.Line(res.Dir), plural(res.Links, "link"))
+		a.printf("exported %s and %s to %s, rewriting %s\n", display.Plural(res.Pages, "page"), display.Plural(res.Files, "other file"), display.Line(res.Dir), display.Plural(res.Links, "link"))
 		for _, rel := range res.Removed {
 			a.printf("%s  %s\n", a.style(ansiDim, "removed"), display.Line(rel))
 		}
@@ -1027,4 +1037,26 @@ func wikiPromote(a *App, args []string) error {
 		a.printf("%s  %s  from %s:%d\n", a.style(ansiDim, info.File()), a.style(ansiBold, info.Title), t.Page, t.Line)
 		return nil
 	})
+}
+
+// wikiConfig prints the default per-user config, or its path. It needs no wiki.
+func wikiConfig(a *App, args []string) error {
+	fs := a.flags("config")
+	where := fs.Bool("path", false, "print where the per-user config goes")
+	if err := parse(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("%w: config [--path]", errUsage)
+	}
+	if !*where {
+		_, err := a.Stdout.Write(wiki.DefaultUserConfig())
+		return err
+	}
+	path, err := wiki.UserConfigPath(a.Env)
+	if err != nil {
+		return err
+	}
+	a.printf("%s\n", path)
+	return nil
 }

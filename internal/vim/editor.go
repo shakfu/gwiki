@@ -1,6 +1,7 @@
 package vim
 
 import (
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -42,7 +43,7 @@ type Hooks struct {
 	Follow    func() error // ctrl-] and gf
 	Back      func() error // ctrl-o and ctrl-t
 	External  func(url string) error
-	Clipboard func(text string)
+	Clipboard func(text string) error
 	Complete  func(previous bool) // ctrl-n and ctrl-p in insert mode
 	Command   func(name, arg string) (bool, error)
 	Changed   func() // after every change, for autosave
@@ -513,7 +514,7 @@ func (e *Editor) continueList() string {
 		return "\n"
 	}
 	if n, ok := numbered(marker); ok {
-		marker = itoa(n+1) + marker[len(marker)-2:]
+		marker = strconv.Itoa(n+1) + marker[len(marker)-2:]
 	}
 	return "\n" + indent + marker
 }
@@ -531,17 +532,6 @@ func numbered(marker string) (int, bool) {
 		n = n*10 + int(c-'0')
 	}
 	return n, true
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b []byte
-	for ; n > 0; n /= 10 {
-		b = append([]byte{byte('0' + n%10)}, b...)
-	}
-	return string(b)
 }
 
 // toggleCheckbox ticks or clears the checklist item on the cursor's line.

@@ -15,6 +15,6 @@ The page is an `internal/vim` editor ([[Editor engine]]). [keyContent](/internal
 
 ### Commands
 
-[The command table](/internal/tui/commands.go#L26) serves both the buffer, through the editor's `Command` hook, and a `:` line on the tree, the overview and the lists. The help lists the same table.
+[The command table](/internal/tui/commands.go#L27) serves both the buffer, through the editor's `Command` hook, and a `:` line on the tree, the overview and the lists. The help lists the same table.
 
 Back to [[TUI]].

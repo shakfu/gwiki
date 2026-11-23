@@ -60,7 +60,7 @@ gwiki new "Design sketch" --in lexer -m "The lexer tokenizes input. See [[Gramma
 gwiki                                       # the interface, on the overview
 ```
 
-`init` also writes `.gwiki/config.json`, whose `name` is the project name the interface shows. It is the directory's name when `init` runs; edit it if you rename the directory. `"clipboard": "unnamedplus"` sends every yank and delete in the editor to the system clipboard, as in vim; without it only `"+` does. Since that file is committed, the setting can also go in your own `~/.config/gwiki/config.json` (`$XDG_CONFIG_HOME/gwiki`, or `%AppData%\gwiki` on Windows), which overrides the project's; there, `"clipboard": ""`, `"mouse": false` or `"copy_on_select": false` turns the project's setting off. That file holds only personal options; any other field is an error.
+`init` also writes `.gwiki/config.json`, whose `name` is the project name the interface shows. It is the directory's name when `init` runs; edit it if you rename the directory. Its other options are under [Configuration](#configuration).
 
 ## Project and user wikis
 
@@ -150,7 +150,7 @@ Wiki actions are commands, typed in the page or after `:` elsewhere:
 :search text    search every page             :fix         repairs for the link under the cursor
 :broken :tasks  broken links; tasks           :backlinks   to the backlinks panel
 :preview        the page drawn as markdown    :check       the broken links in it
-:external       edit in $EDITOR               :mouse       mouse capture on or off
+:external       edit in $EDITOR               :mouse       mouse capture off or on
 :overview :reload :help
 ```
 
@@ -160,7 +160,7 @@ Pages changed outside the interface, by an editor, git or an agent, reload withi
 
 Fenced code with a language is highlighted, in the buffer and the preview. Up and down on a `:` or `/` line recall earlier lines that begin with what is typed; the history is shared by every page.
 
-`:mouse` turns the mouse on; it is off at start, so the terminal selects text as usual, unless `config.json` sets `"mouse": true`. Then click a tree row, list row, backlink or tab to open it, and the wheel scrolls the pane under it. A click in the page places the cursor; a second click on the same link follows it. A drag selects text in visual mode; `"+y` copies it, or `y` with `unnamedplus` set, or letting go of the button with `"copy_on_select": true`. The terminal handles cmd-c and ctrl-shift-c itself and copies only its own selection, so these keys do not copy gwiki's. `:mouse` again turns capture off.
+The mouse works: click a tree row, list row, backlink or tab to open it, and the wheel scrolls the pane under it. A click in the page places the cursor; a second click on the same link follows it. A drag selects text in visual mode and copies it to the clipboard when the button is let go. `:mouse` turns capture off, so the terminal selects text as usual, and on again. See [Configuration](#configuration) for both, and for why cmd-c does not copy gwiki's selection.
 
 Macros, marks, blockwise visual, `:g`, folds and mappings are not there; `:help` lists what is.
 
@@ -221,6 +221,40 @@ claude mcp add gwiki -- gwiki mcp
 
 The agent gets tools to list, search and read pages, create them, edit exact text or write whole pages, rename pages, list and repair broken links and line anchors whose code moved, and change task status. If a page changed since the agent read it, the write is refused, and the agent gets the current page to try again. There is no delete tool.
 
+## Configuration
+
+Options are read from two `config.json` files, and the interface uses them:
+
+- `.gwiki/config.json`, the project's, committed with the wiki, so its options apply to everyone using it.
+- `~/.config/gwiki/config.json`, your own: `$XDG_CONFIG_HOME/gwiki/config.json` when that is set, `%AppData%\gwiki\config.json` on Windows. A value set here overrides the project's. It holds only the options below; any other field, `name` included, is an error.
+
+Neither file is needed: an option set in neither takes its default.
+
+| Option | Default | Effect |
+|-|-|-|
+| `"mouse"` | `true` | Mouse capture at start. `false` leaves the terminal its own text selection; `:mouse` toggles capture while running. |
+| `"copy_on_select"` | `true` | Letting go of a mouse drag copies the selection to the system clipboard. `false` leaves the copy to `y`. |
+| `"clipboard"` | `"unnamedplus"` | Every yank and delete also goes to the system clipboard, as with vim's `clipboard=unnamedplus`. `""` keeps them in the editor, so only `"+y` reaches the clipboard. |
+
+A misspelt value, such as `"clipboard": "unamedplus"`, is an error when the interface starts rather than an option left off.
+
+`gwiki config` prints your own file with every option at its default, and `gwiki config --path` prints where it goes. To start one:
+
+```sh
+mkdir -p "$(dirname "$(gwiki config --path)")"
+gwiki config > "$(gwiki config --path)"
+```
+
+Each value in it then overrides the project's, so delete the lines you want the project to decide. Delete the file to go back to the project's options and the defaults:
+
+```sh
+rm "$(gwiki config --path)"
+```
+
+The terminal handles cmd-c and ctrl-shift-c itself and copies only its own selection, so those keys cannot copy gwiki's selection. With the defaults, a drag or `y` puts the text on the clipboard, and cmd-v pastes it anywhere.
+
+gwiki sets the clipboard with `pbcopy` on macOS, and `wl-copy`, `xclip` or `xsel` on Linux and the BSDs. Over SSH, on Windows, or with none of these installed, it sends OSC 52, which asks the terminal to set its clipboard. Not every terminal does: iTerm2 needs "Applications in terminal may access clipboard" turned on, tmux needs `set -g set-clipboard on`, and Terminal.app has no support.
+
 ## Commands
 
 ```sh
@@ -243,6 +277,7 @@ gwiki tasks -s open
 gwiki done index:12   gwiki doing tasks/ship   gwiki reopen index:12
 gwiki promote index:12                      # a checklist item becomes a task page
 gwiki cache --rebuild
+gwiki config > "$(gwiki config --path)"     # the per-user config, every option at its default
 gwiki serve                                 # the wiki in a browser
 gwiki ui                                    # the terminal interface
 gwiki lsp                                   # the language server, started by an editor

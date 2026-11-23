@@ -4,19 +4,25 @@ Notable changes to gwiki, newest first.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). From the first tagged release onwards the project follows [semantic versioning](https://semver.org/spec/v2.0.0.html), where a breaking change means one that stops an existing database from opening or reading correctly.
 
-## [Unreleased]
+## [0.7.0]
 
 ### Added
 
 **Fenced code is highlighted** in the buffer and the preview, by chroma (`internal/syntax`), in the theme's colours. Chroma adds 3.6 MB to the binary; a hand-written lexer for a few languages was the smaller choice. Page text is untrusted and chroma's regexps backtrack: each rule may run 250 ms before it times out, so one token can take seconds. Lexing therefore runs on one background goroutine. A block over 32 KiB, or one not lexed within 50 ms, is left plain with a warning on the status line, and the same text is not lexed again. Chroma lexes about 1 ms per KiB, so the cap keeps ordinary code within the time limit.
 
-**`"clipboard": "unnamedplus"` in `config.json`** sends every yank and delete in the editor to the system clipboard, as vim's option does. Named registers and `"_` stay out of it. Off by default, since each `dd` would replace what was copied elsewhere. Any other value is an error when the wiki opens, so a misspelling does not leave the option silently off. `config.json` is committed, so the option can also be set per user in `~/.config/gwiki/config.json` (`$XDG_CONFIG_HOME/gwiki`; `%AppData%\gwiki` on Windows), which the interface reads over the project's. That file takes only personal options, so a `name` there is an error rather than a rename for one user.
+**Every yank and delete in the editor also goes to the system clipboard**, as with vim's `clipboard=unnamedplus`, so `y` then cmd-v elsewhere works. Named registers and `"_` stay out of it. Each `dd` replaces what was copied elsewhere; `"clipboard": ""` in `config.json` keeps yanks in the editor, as vim does by default. Any other value than `""` or `"unnamedplus"` is an error when the wiki opens, so a misspelling does not leave the option silently off. `config.json` is committed, so the option can also be set per user in `~/.config/gwiki/config.json` (`$XDG_CONFIG_HOME/gwiki`; `%AppData%\gwiki` on Windows), which the interface reads over the project's. That file takes only personal options, so a `name` there is an error rather than a rename for one user.
 
-**`"copy_on_select": true` in `config.json`** copies a mouse selection to the system clipboard when the button is let go, as terminals do with their own selection, and keeps it selected. The terminal takes cmd-c for its own selection, which a program cannot set, so cmd-c cannot copy gwiki's. Off by default, so a stray drag does not replace the clipboard.
+**`gwiki config` prints the per-user `config.json`** with every option at its default, and `--path` prints where it goes, so `gwiki config > "$(gwiki config --path)"` starts one to edit. The output is encoded by the struct that reads the file, so it is always accepted.
 
-**The mouse works in the interface.** A click opens a tree row, list row, backlink or overview tab, and folds a directory at its marker. A click in the page places the cursor, and a second click on the same link follows it, so one click shows where a link goes. A click on a repair only selects it, since applying one writes. The wheel scrolls the pane under the pointer. A drag in the page selects in visual mode, as in vim with `mouse=a`. Selecting buffer text, not screen cells, leaves out the line numbers and the tree. Mouse capture disables the terminal's own selection, so it is off at start unless `config.json` sets `"mouse": true`, per user or per project, and `:mouse` toggles it. Click targets are recorded as each frame is drawn, so hit testing uses the layout on screen.
+**Copies reach the clipboard in terminals that ignore OSC 52.** The editor set the clipboard only with OSC 52, which asks the terminal to do it. Terminal.app ignores it, and iTerm2 and tmux drop it unless configured to allow it, so a yank reported success and copied nothing. On this machine gwiki now runs `pbcopy`, `wl-copy`, `xclip` or `xsel`, and reports one that fails on the status line. OSC 52 remains over SSH, where those tools would set the far machine's clipboard, on Windows, whose `clip.exe` garbles text that is not ASCII, and where no tool is installed.
+
+**A mouse selection is copied to the system clipboard when the button is let go**, as terminals do with their own selection, and stays selected. The terminal takes cmd-c for its own selection, which a program cannot set, so cmd-c cannot copy gwiki's; with the mouse on by default, a drag that copied nothing would look like a failed copy. A stray drag replaces the clipboard, as in such terminals; `"copy_on_select": false` in `config.json` turns this off.
+
+**The mouse works in the interface.** A click opens a tree row, list row, backlink or overview tab, and folds a directory at its marker. A click in the page places the cursor, and a second click on the same link follows it, so one click shows where a link goes. A click on a repair only selects it, since applying one writes. The wheel scrolls the pane under the pointer. A drag in the page selects in visual mode, as in vim with `mouse=a`. Selecting buffer text, not screen cells, leaves out the line numbers and the tree. Mouse capture disables the terminal's own selection, so `"mouse": false` in `config.json`, per user or per project, starts with it off, and `:mouse` toggles it. Click targets are recorded as each frame is drawn, so hit testing uses the layout on screen.
 
 ### Changed
+
+**staticcheck is pinned at v0.8.2**, up from v0.8.1, which cannot read packages built by Go 1.27.
 
 **A browser-view tick on a line that holds no task is now 400, not 404.**
 

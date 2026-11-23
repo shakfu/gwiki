@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"fmt"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
@@ -165,14 +167,17 @@ func (m *WikiModel) dragBuffer(x, y int) {
 	e.ed.Select(*e.dragFrom, at)
 }
 
-// dropBuffer copies a drag's selection when config.json sets copy_on_select,
-// as terminals copy their own selection on release.
+// dropBuffer copies a drag's selection unless config.json sets
+// copy_on_select false, as terminals copy their own selection on release.
 func (m *WikiModel) dropBuffer() {
 	e := m.edit
-	if e == nil || e.dragFrom == nil || !m.w.Config.CopyOnSelect {
+	if e == nil || e.dragFrom == nil || !m.w.Config.CopyOnSelectOn() {
 		return
 	}
-	if _, ok := e.ed.CopySelection(); ok {
+	switch ok, err := e.ed.CopySelection(); {
+	case err != nil:
+		m.setError(fmt.Errorf("clipboard: %w", err))
+	case ok:
 		m.setStatus("copied")
 	}
 }

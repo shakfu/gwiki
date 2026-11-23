@@ -2,9 +2,13 @@ package cli
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/shakfu/gwiki/internal/wiki"
 )
 
 // fixture drives the whole command line in-process: no subprocess and no
@@ -149,5 +153,37 @@ func TestDoubleDashPassesADashedTitle(t *testing.T) {
 	f := wikiFixture(t)
 	if out := f.mustRun("new", "--", "-x marks the spot"); !strings.Contains(out, "-x marks the spot") {
 		t.Fatalf("the dashed title was not kept: %s", out)
+	}
+}
+
+// gwiki config prints a per-user config that the interface accepts as is,
+// with every option at its default, and needs no wiki; --path names where it
+// goes.
+func TestConfigPrintsDefaultsAndPath(t *testing.T) {
+	f := &fixture{t: t, dir: t.TempDir()}
+	out := f.mustRun("config")
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	off := false
+	none := ""
+	p := &wiki.Project{Config: wiki.Config{Clipboard: &none, Mouse: &off, CopyOnSelect: &off}}
+	if err := p.UseUserConfig(path); err != nil {
+		t.Fatalf("its own output is refused: %v\n%s", err, out)
+	}
+	var zero wiki.Config
+	if p.Config.Unnamedplus() != zero.Unnamedplus() || p.Config.MouseOn() != zero.MouseOn() || p.Config.CopyOnSelectOn() != zero.CopyOnSelectOn() {
+		t.Errorf("not the defaults: %+v\n%s", p.Config, out)
+	}
+
+	var stdout bytes.Buffer
+	app := &App{Stdout: &stdout, Stderr: &bytes.Buffer{}, Dir: f.dir,
+		Env: func(k string) string { return map[string]string{"XDG_CONFIG_HOME": "/x"}[k] }}
+	if code := app.Run([]string{"config", "--path"}); code != 0 || stdout.String() != filepath.Join("/x", "gwiki", "config.json")+"\n" {
+		t.Errorf("--path: exit %d, %q", code, stdout.String())
+	}
+	if _, _, code := f.run("config", "extra"); code != 2 {
+		t.Errorf("config extra: exit %d, want 2", code)
 	}
 }

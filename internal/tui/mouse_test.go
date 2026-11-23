@@ -142,13 +142,10 @@ func TestMouseIgnoredUnderPromptAndToggled(t *testing.T) {
 	if f.page() != "index" {
 		t.Fatalf("a click under the prompt opened %q", f.page())
 	}
-	if f.m.mouseOn {
-		t.Fatal("capture is on before :mouse")
-	}
-	if cmd := f.press("mouse", "enter"); cmd == nil || !f.m.mouseOn {
+	if cmd := f.press("mouse", "enter"); cmd == nil || f.m.mouseOn {
 		t.Fatalf(":mouse: on %v, cmd %v", f.m.mouseOn, cmd)
 	}
-	if cmd := f.press(":", "mouse", "enter"); cmd == nil || f.m.mouseOn {
+	if cmd := f.press(":", "mouse", "enter"); cmd == nil || !f.m.mouseOn {
 		t.Fatalf(":mouse again: on %v, cmd %v", f.m.mouseOn, cmd)
 	}
 }
@@ -165,8 +162,10 @@ func (f *wikiFixture) release(x, y int) {
 // mode, and "+y copies what it selected.
 func TestMouseDragSelects(t *testing.T) {
 	f := newWikiFixture(t)
+	off := false
+	f.w.Config.CopyOnSelect = &off // the yank, not the release, must copy
 	var copied string
-	f.m.copy = func(text string) { copied = text }
+	f.m.copy = func(text string) error { copied = text; return nil }
 	f.m.focus = focusContent
 	x, y := f.find("write docs", wikiTreeWidth+1)
 	f.click(x, y)
@@ -228,46 +227,59 @@ func TestMouseDragInInsertMode(t *testing.T) {
 	}
 }
 
-// With "clipboard": "unnamedplus", a drag then a plain y copies.
+// By default a drag then a plain y copies; with "clipboard": "" it does not.
 func TestMouseDragYankUnnamedplus(t *testing.T) {
-	f := newWikiFixture(t)
-	var copied string
-	f.m.copy = func(text string) { copied = text }
-	f.w.Config.Clipboard = "unnamedplus"
-	f.m.openBuffer("index", []byte(f.m.edit.ed.Buf.Text()), f.m.edit.base)
-	f.m.focus = focusContent
-	f.m.View()
-	x, y := f.find("write docs", wikiTreeWidth+1)
-	f.click(x, y)
-	f.drag(x+9, y)
-	f.release(x+9, y)
-	f.press("y")
-	if copied != "write docs" {
-		t.Fatalf("copied %q", copied)
+	for _, clipboard := range []string{"default", ""} {
+		f := newWikiFixture(t)
+		off := false
+		f.w.Config.CopyOnSelect = &off // the yank, not the release, must copy
+		var copied string
+		f.m.copy = func(text string) error { copied = text; return nil }
+		want := "write docs"
+		if clipboard != "default" {
+			f.w.Config.Clipboard, want = &clipboard, ""
+		}
+		f.m.openBuffer("index", []byte(f.m.edit.ed.Buf.Text()), f.m.edit.base)
+		f.m.focus = focusContent
+		f.m.View()
+		x, y := f.find("write docs", wikiTreeWidth+1)
+		f.click(x, y)
+		f.drag(x+9, y)
+		f.release(x+9, y)
+		f.press("y")
+		if copied != want {
+			t.Fatalf("clipboard %q: copied %q, want %q", clipboard, copied, want)
+		}
 	}
 }
 
-// "mouse": true in the config starts the interface with capture on.
+// Capture is on at start unless the config sets "mouse": false.
 func TestMouseConfigStartsOn(t *testing.T) {
 	f := newWikiFixture(t)
-	f.w.Config.Mouse = true
+	if !f.m.mouseOn {
+		t.Fatal("capture off by default")
+	}
+	off := false
+	f.w.Config.Mouse = &off
 	m, err := NewWiki(f.w)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !m.mouseOn {
-		t.Fatal("capture off with mouse set")
+	if m.mouseOn {
+		t.Fatal(`capture on with "mouse": false`)
 	}
 }
 
-// With copy_on_select, letting go of a drag copies its selection and keeps it;
-// a click copies nothing, and without the option a drag copies nothing.
+// By default letting go of a drag copies its selection and keeps it; a click
+// copies nothing, and with copy_on_select false a drag copies nothing.
 func TestMouseCopyOnSelect(t *testing.T) {
 	for _, on := range []bool{true, false} {
 		f := newWikiFixture(t)
 		copied := "unset"
-		f.m.copy = func(text string) { copied = text }
-		f.w.Config.CopyOnSelect = on
+		f.m.copy = func(text string) error { copied = text; return nil }
+		if !on {
+			f.w.Config.CopyOnSelect = &on
+		}
 		f.m.focus = focusContent
 		x, y := f.find("write docs", wikiTreeWidth+1)
 		f.click(x, y)

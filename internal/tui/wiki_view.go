@@ -121,7 +121,7 @@ func (m *WikiModel) viewWikiHeader() string {
 			if r.broken > 0 {
 				right = append(right, seg{fmt.Sprintf("✗ %d broken  ", r.broken), styleError})
 			}
-			right = append(right, seg{plural(r.links, "link") + "  " + plural(len(r.backlinks), "backlink") + " ", styleDim})
+			right = append(right, seg{display.Plural(r.links, "link") + "  " + display.Plural(len(r.backlinks), "backlink") + " ", styleDim})
 		}
 	}
 	return bar(m.width, left, right)
@@ -355,7 +355,7 @@ func (m *WikiModel) viewPanel(width int) []string {
 		return nil
 	}
 	r := m.cur
-	title := fmt.Sprintf(" ── %s from %s ", plural(len(r.backlinks), "backlink"), plural(len(r.linkers), "page"))
+	title := fmt.Sprintf(" ── %s from %s ", display.Plural(len(r.backlinks), "backlink"), display.Plural(len(r.linkers), "page"))
 	lines := []string{styleDim.Render(truncate(title+strings.Repeat("─", max(0, width-ansi.StringWidth(title))), width))}
 
 	t := &table{cols: []column{{shrink: 1, min: 8}, {shrink: 2}, {right: true}}}

@@ -2,9 +2,12 @@ package vim
 
 import (
 	"slices"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/shakfu/gwiki/internal/display"
 )
 
 // result says what the keys parsed so far amount to.
@@ -267,7 +270,7 @@ func (e *Editor) run(keys []string, count int, reg rune) result {
 			if _, i := readCount(keys, 0); i > 0 {
 				keys = keys[i:]
 			}
-			keys = slices.Concat(prefix, strings.Split(itoa(count), ""), keys)
+			keys = slices.Concat(prefix, strings.Split(strconv.Itoa(count), ""), keys)
 		}
 		e.replaying = true
 		e.pending = nil
@@ -414,7 +417,7 @@ func (e *Editor) enterMode(head string, visual bool) result { //nolint:revive //
 		prefix := strings.Repeat(" ", indentOf(e.Buf.Line(line)))
 		if isList {
 			if n, ok := numbered(marker); ok && head == "o" {
-				marker = itoa(n+1) + marker[len(marker)-2:]
+				marker = strconv.Itoa(n+1) + marker[len(marker)-2:]
 			}
 			prefix = indent + marker
 		}
@@ -453,15 +456,14 @@ func (e *Editor) span(a, z Pos, linewise bool) (Pos, Pos, string) {
 
 // CopySelection puts the visual selection, as y would yank it, in the '+'
 // register and the system clipboard, and stays in visual mode. It reports
-// false outside visual mode.
-func (e *Editor) CopySelection() (string, bool) {
+// false outside visual mode, and the clipboard's error.
+func (e *Editor) CopySelection() (bool, error) {
 	a, z, ok := e.Selection()
 	if !ok {
-		return "", false
+		return false, nil
 	}
 	_, _, text := e.span(a, z, e.Mode == VisualLine)
-	e.clip(register{text: text, linewise: e.Mode == VisualLine})
-	return text, true
+	return true, e.clip(register{text: text, linewise: e.Mode == VisualLine})
 }
 
 // applyOperator runs an operator over a range. The range is inclusive of z
@@ -471,12 +473,14 @@ func (e *Editor) applyOperator(op string, a, z Pos, linewise bool, reg rune) {
 
 	switch op {
 	case "y":
-		e.yank(reg, text, linewise)
+		err := e.yank(reg, text, linewise)
 		e.Cursor = e.Buf.clamp(a, false)
-		e.setMessage(count(strings.Count(text, "\n"), "line") + " yanked")
+		e.setMessage(display.Plural(strings.Count(text, "\n"), "line") + " yanked")
 		e.Mode = leaveVisual(e.Mode)
+		e.failClip(err)
 	case "d", "c":
-		e.yank(reg, text, linewise)
+		err := e.yank(reg, text, linewise)
+		defer e.failClip(err) // after insert mode clears the message
 		// c and the insert that follows are one undo step.
 		e.holding = op == "c"
 		e.change(func() {
@@ -516,6 +520,13 @@ func (e *Editor) applyOperator(op string, a, z Pos, linewise bool, reg rune) {
 	}
 }
 
+// failClip shows a clipboard error in place of the operator's message.
+func (e *Editor) failClip(err error) {
+	if err != nil {
+		e.fail("clipboard: " + err.Error())
+	}
+}
+
 // emptyOperator is an operator over an exclusive motion that did not move,
 // which covers no text: c still inserts, and a shift still takes the line.
 func (e *Editor) emptyOperator(op string) {
@@ -531,7 +542,7 @@ func (e *Editor) emptyOperator(op string) {
 // same number of lines, and on the last line the same column, or the same
 // number of characters within one line. "." replays them before the operator.
 func (e *Editor) visualKeys(a, z Pos) []string {
-	digits := func(n int) []string { return strings.Split(itoa(n), "") }
+	digits := func(n int) []string { return strings.Split(strconv.Itoa(n), "") }
 	n := z.Line - a.Line
 	if e.Mode == VisualLine {
 		keys := []string{"V"}
@@ -573,28 +584,21 @@ func mapCase(op, text string) string {
 	}, text)
 }
 
-func count(n int, what string) string {
-	if n == 1 {
-		return "1 " + what
-	}
-	return itoa(n) + " " + what + "s"
-}
-
 // yank stores text in a register: the one named, else the unnamed register
-// and register 0.
-func (e *Editor) yank(reg rune, text string, linewise bool) {
+// and register 0. It returns the clipboard's error for '+'.
+func (e *Editor) yank(reg rune, text string, linewise bool) error {
 	r := register{text: text, linewise: linewise}
 	switch reg {
 	case 0:
 		e.registers['"'] = r
 		e.registers['0'] = r
 		if e.Unnamedplus {
-			e.clip(r)
+			return e.clip(r)
 		}
 	case '_':
 	case '+':
 		e.registers['"'] = r
-		e.clip(r)
+		return e.clip(r)
 	default:
 		if unicode.IsUpper(reg) {
 			lower := unicode.ToLower(reg)
@@ -606,14 +610,16 @@ func (e *Editor) yank(reg rune, text string, linewise bool) {
 		e.registers[reg] = r
 		e.registers['"'] = r
 	}
+	return nil
 }
 
 // clip fills the '+' register and hands its text to the system clipboard.
-func (e *Editor) clip(r register) {
+func (e *Editor) clip(r register) error {
 	e.registers['+'] = r
-	if e.Hooks.Clipboard != nil {
-		e.Hooks.Clipboard(r.text)
+	if e.Hooks.Clipboard == nil {
+		return nil
 	}
+	return e.Hooks.Clipboard(r.text)
 }
 
 // Register returns a register's text, for the host or a test.

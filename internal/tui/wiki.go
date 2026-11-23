@@ -130,14 +130,14 @@ type WikiModel struct {
 	// exec runs a program with the terminal, and copy puts text in the
 	// system clipboard; tests replace both.
 	exec func(*exec.Cmd, tea.ExecCallback) tea.Cmd
-	copy func(text string)
+	copy func(text string) error
 
 	// after is a command queued by a key for Update to return.
 	after tea.Cmd
 
 	// zones are the last frame's mouse targets; mouseOn is mouse capture,
-	// off unless config.json sets "mouse", so the terminal keeps its own text
-	// selection.
+	// on unless config.json sets "mouse": false, which leaves the terminal its
+	// own text selection.
 	zones   []zone
 	mouseOn bool
 	held    *zone // the zone the left button went down in, until it is up
@@ -186,12 +186,11 @@ func NewWiki(w *wiki.Wiki) (*WikiModel, error) {
 		height:    24,
 		collapsed: map[string]bool{},
 		commands:  &vim.History{},
-		mouseOn:   w.Config.Mouse,
+		mouseOn:   w.Config.MouseOn(),
 		getenv:    os.Getenv,
 		now:       time.Now,
 		exec:      tea.ExecProcess,
-		// OSC 52: the terminal sets its clipboard, over SSH too.
-		copy: func(text string) { term.Output().Copy(text) },
+		copy:      systemCopy(os.Getenv, func(text string) { term.Output().Copy(text) }),
 	}
 	if err := m.loadPages(); err != nil {
 		return nil, err

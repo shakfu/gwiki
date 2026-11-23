@@ -213,13 +213,13 @@ func TestParseIsSafeConcurrently(t *testing.T) {
 // link and checklist items, about 1.3 KB.
 func benchPage(i int) string {
 	var b strings.Builder
-	b.WriteString("---\ntitle: Page " + itoa(i) + "\ntags: [bench, parser]\n---\n\n# Page " + itoa(i) + "\n\n")
+	b.WriteString("---\ntitle: Page " + strconv.Itoa(i) + "\ntags: [bench, parser]\n---\n\n# Page " + strconv.Itoa(i) + "\n\n")
 	for s := 0; s < 4; s++ {
-		b.WriteString("## Section " + itoa(s) + "\n\n")
-		b.WriteString("The lexer tokenizes input before the parser runs. See [[Page " + itoa(i+s+1) + "]] and ")
-		b.WriteString("[the lexer](../../src/lexer.go#L42), then [[area/page-" + itoa(i) + "#section-" + itoa(s) + "|this section]].\n")
-		b.WriteString("Some `inline code` and **emphasis** to parse, with a [link](page-" + itoa(i+s) + ".md).\n\n")
-		b.WriteString("- [ ] follow up on section " + itoa(s) + " due:2026-08-21\n- [x] done item\n\n")
+		b.WriteString("## Section " + strconv.Itoa(s) + "\n\n")
+		b.WriteString("The lexer tokenizes input before the parser runs. See [[Page " + strconv.Itoa(i+s+1) + "]] and ")
+		b.WriteString("[the lexer](../../src/lexer.go#L42), then [[area/page-" + strconv.Itoa(i) + "#section-" + strconv.Itoa(s) + "|this section]].\n")
+		b.WriteString("Some `inline code` and **emphasis** to parse, with a [link](page-" + strconv.Itoa(i+s) + ".md).\n\n")
+		b.WriteString("- [ ] follow up on section " + strconv.Itoa(s) + " due:2026-08-21\n- [x] done item\n\n")
 	}
 	return b.String()
 }

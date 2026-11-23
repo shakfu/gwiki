@@ -34,12 +34,9 @@ type Edit struct {
 // arguments ("code -w") or a quoted path containing spaces both work. The
 // variable is the user's own configuration, not input from the log.
 func Start(text string, getenv func(string) string) (*Edit, error) {
-	editor := strings.TrimSpace(getenv("VISUAL"))
-	if editor == "" {
-		editor = strings.TrimSpace(getenv("EDITOR"))
-	}
-	if editor == "" {
-		return nil, ErrNoEditor
+	editor, err := command(getenv)
+	if err != nil {
+		return nil, err
 	}
 
 	// A .md suffix so the editor turns on markdown highlighting. CreateTemp
@@ -111,12 +108,9 @@ func (e *Edit) Cleanup() { os.Remove(e.Path) }
 // is positive. The line is passed as +N, which vi, vim, nano, emacs, micro and
 // kakoune accept.
 func Open(path string, line int, getenv func(string) string) (*exec.Cmd, error) {
-	editor := strings.TrimSpace(getenv("VISUAL"))
-	if editor == "" {
-		editor = strings.TrimSpace(getenv("EDITOR"))
-	}
-	if editor == "" {
-		return nil, ErrNoEditor
+	editor, err := command(getenv)
+	if err != nil {
+		return nil, err
 	}
 	args := []string{path}
 	if line > 0 {
@@ -127,4 +121,16 @@ func Open(path string, line int, getenv func(string) string) (*exec.Cmd, error) 
 		return exec.Command(fields[0], append(fields[1:], args...)...), nil
 	}
 	return exec.Command("sh", append([]string{"-c", editor + ` "$@"`, "sh"}, args...)...), nil
+}
+
+// command is $VISUAL, else $EDITOR, as getenv reports them.
+func command(getenv func(string) string) (string, error) {
+	editor := strings.TrimSpace(getenv("VISUAL"))
+	if editor == "" {
+		editor = strings.TrimSpace(getenv("EDITOR"))
+	}
+	if editor == "" {
+		return "", ErrNoEditor
+	}
+	return editor, nil
 }

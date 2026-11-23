@@ -696,20 +696,50 @@ func TestUserWikiRepository(t *testing.T) {
 	}
 }
 
-// config.json's clipboard takes "unnamedplus" or nothing; a typo is an error,
-// not an option silently off.
-func TestConfigClipboard(t *testing.T) {
-	for body, ok := range map[string]bool{
-		`{"name": "x"}`: true,
-		`{"name": "x", "clipboard": "unnamedplus"}`: true,
-		`{"name": "x", "clipboard": "unamedplus"}`:  false,
+// The mouse is on unless the project's config.json sets it false.
+func TestConfigMouseDefaultsOn(t *testing.T) {
+	for body, want := range map[string]bool{
+		`{"name": "x"}`:                 true,
+		`{"name": "x", "mouse": false}`: false,
+		`{"name": "x", "mouse": true}`:  true,
 	} {
 		root := t.TempDir()
 		write(t, filepath.Join(root, DirName, PagesDir, "index.md"), "# x\n")
 		write(t, filepath.Join(root, DirName, configFile), body)
-		_, err := load(root, root)
-		if (err == nil) != ok {
-			t.Errorf("%s: err %v", body, err)
+		p, err := load(root, root)
+		if err != nil || p.Config.MouseOn() != want {
+			t.Errorf("%s: on %v, err %v", body, p != nil && p.Config.MouseOn(), err)
+		}
+	}
+	root := t.TempDir()
+	p, err := Init(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(filepath.Join(root, DirName, configFile))
+	if !p.Config.MouseOn() || strings.Contains(string(raw), "mouse") {
+		t.Errorf("Init: on %v, config.json %s", p.Config.MouseOn(), raw)
+	}
+}
+
+// config.json's clipboard is "unnamedplus" unless set to ""; a typo is an
+// error, not an option silently off.
+func TestConfigClipboard(t *testing.T) {
+	for _, c := range []struct {
+		body   string
+		on, ok bool
+	}{
+		{`{"name": "x"}`, true, true},
+		{`{"name": "x", "clipboard": "unnamedplus"}`, true, true},
+		{`{"name": "x", "clipboard": ""}`, false, true},
+		{`{"name": "x", "clipboard": "unamedplus"}`, false, false},
+	} {
+		root := t.TempDir()
+		write(t, filepath.Join(root, DirName, PagesDir, "index.md"), "# x\n")
+		write(t, filepath.Join(root, DirName, configFile), c.body)
+		p, err := load(root, root)
+		if (err == nil) != c.ok || (c.ok && p.Config.Unnamedplus() != c.on) {
+			t.Errorf("%s: err %v", c.body, err)
 		}
 	}
 }
@@ -720,48 +750,61 @@ func TestUserConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")
 	for _, c := range []struct {
-		project, user string // user "" means no file
-		want          string
+		project, user string // project "-" means unset; user "" means no file
+		want          bool
 		ok            bool
 	}{
-		{"", "", "", true},
-		{"unnamedplus", "", "unnamedplus", true},
-		{"", `{"clipboard": "unnamedplus"}`, "unnamedplus", true},
-		{"unnamedplus", `{"clipboard": ""}`, "", true},
-		{"unnamedplus", `{}`, "unnamedplus", true},
-		{"", `{"clipboard": "plus"}`, "", false},
-		{"", `{"name": "mine"}`, "", false},
-		{"", `{`, "", false},
+		{"-", "", true, true},
+		{"", "", false, true},
+		{"unnamedplus", "", true, true},
+		{"", `{"clipboard": "unnamedplus"}`, true, true},
+		{"-", `{"clipboard": ""}`, false, true},
+		{"unnamedplus", `{"clipboard": ""}`, false, true},
+		{"", `{}`, false, true},
+		{"-", `{"clipboard": "plus"}`, false, false},
+		{"-", `{"name": "mine"}`, false, false},
+		{"-", `{`, false, false},
 	} {
 		os.Remove(path)
 		if c.user != "" {
 			write(t, path, c.user)
 		}
-		p := &Project{Config: Config{Name: "proj", Clipboard: c.project}}
+		p := &Project{Config: Config{Name: "proj"}}
+		if c.project != "-" {
+			p.Config.Clipboard = &c.project
+		}
 		err := p.UseUserConfig(path)
-		if (err == nil) != c.ok || (c.ok && p.Config.Clipboard != c.want) || p.Config.Name != "proj" {
-			t.Errorf("project %q, user %q: clipboard %q, name %q, err %v", c.project, c.user, p.Config.Clipboard, p.Config.Name, err)
+		if (err == nil) != c.ok || (c.ok && p.Config.Unnamedplus() != c.want) || p.Config.Name != "proj" {
+			t.Errorf("project %q, user %q: unnamedplus %v, name %q, err %v", c.project, c.user, p.Config.Unnamedplus(), p.Config.Name, err)
 		}
 	}
+	on, off := true, false
 	for _, c := range []struct {
-		project bool
+		project *bool // nil: unset
 		user    string
 		want    bool
 	}{
-		{false, `{"mouse": true}`, true},
-		{true, `{"mouse": false}`, false},
-		{true, `{"clipboard": ""}`, true},
+		{nil, `{}`, true},
+		{nil, `{"mouse": false}`, false},
+		{&off, `{}`, false},
+		{&off, `{"mouse": true}`, true},
+		{&on, `{"mouse": false}`, false},
 	} {
 		write(t, path, c.user)
 		p := &Project{Config: Config{Mouse: c.project}}
-		if err := p.UseUserConfig(path); err != nil || p.Config.Mouse != c.want {
-			t.Errorf("project mouse %v, user %s: mouse %v, err %v", c.project, c.user, p.Config.Mouse, err)
+		if err := p.UseUserConfig(path); err != nil || p.Config.MouseOn() != c.want {
+			t.Errorf("project mouse %v, user %s: on %v, err %v", c.project, c.user, p.Config.MouseOn(), err)
 		}
 	}
-	write(t, path, `{"copy_on_select": true}`)
-	p := &Project{}
-	if err := p.UseUserConfig(path); err != nil || !p.Config.CopyOnSelect {
-		t.Errorf("copy_on_select: %v, err %v", p.Config.CopyOnSelect, err)
+	for user, want := range map[string]bool{`{}`: true, `{"copy_on_select": false}`: false, `{"copy_on_select": true}`: true} {
+		write(t, path, user)
+		p := &Project{Config: Config{CopyOnSelect: &off}}
+		if user == `{}` {
+			p.Config.CopyOnSelect = nil
+		}
+		if err := p.UseUserConfig(path); err != nil || p.Config.CopyOnSelectOn() != want {
+			t.Errorf("copy_on_select, user %s: on %v, err %v", user, p.Config.CopyOnSelectOn(), err)
+		}
 	}
 	write(t, path, `{"mouse": "yes"}`)
 	if err := (&Project{}).UseUserConfig(path); err == nil {

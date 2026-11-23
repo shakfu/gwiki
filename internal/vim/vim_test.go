@@ -1,6 +1,7 @@
 package vim
 
 import (
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -307,7 +308,7 @@ func TestHooks(t *testing.T) {
 		Reload:    func() error { reloaded = true; return nil },
 		Follow:    func() error { followed = true; return nil },
 		Back:      func() error { back = true; return nil },
-		Clipboard: func(text string) { clip = text },
+		Clipboard: func(text string) error { clip = text; return nil },
 		Command: func(name, arg string) (bool, error) {
 			return name == "preview", nil
 		},
@@ -636,7 +637,7 @@ func TestUnnamedplus(t *testing.T) {
 		e := New("one\ntwo\n")
 		e.Unnamedplus = c.on
 		var clip string
-		e.Hooks.Clipboard = func(text string) { clip = text }
+		e.Hooks.Clipboard = func(text string) error { clip = text; return nil }
 		e.Keys(keys(c.keys)...)
 		if clip != c.want {
 			t.Errorf("on=%v %s: clipboard %q, want %q", c.on, c.keys, clip, c.want)
@@ -656,15 +657,38 @@ func TestCopySelection(t *testing.T) {
 	} {
 		e := New("one\ntwo\n")
 		var clip string
-		e.Hooks.Clipboard = func(text string) { clip = text }
+		e.Hooks.Clipboard = func(text string) error { clip = text; return nil }
 		e.Keys(keys(c.keys)...)
 		mode := e.Mode
-		text, ok := e.CopySelection()
-		if !ok || text != c.want || clip != c.want || e.Register('+') != c.want || e.Mode != mode {
-			t.Errorf("%s: text %q, clip %q, + %q, mode %v", c.keys, text, clip, e.Register('+'), e.Mode)
+		ok, err := e.CopySelection()
+		if !ok || err != nil || clip != c.want || e.Register('+') != c.want || e.Mode != mode {
+			t.Errorf("%s: ok %v, err %v, clip %q, + %q, mode %v", c.keys, ok, err, clip, e.Register('+'), e.Mode)
 		}
 	}
-	if _, ok := New("x\n").CopySelection(); ok {
+	if ok, _ := New("x\n").CopySelection(); ok {
 		t.Error("copied outside visual mode")
+	}
+}
+
+// A clipboard that fails is reported in place of the command's message, also
+// after c, whose insert mode clears it; the text still reaches the registers.
+func TestClipboardErrorIsShown(t *testing.T) {
+	for _, k := range []string{"yy", "dd", "cw", "x"} {
+		e := New("one\ntwo\n")
+		e.Unnamedplus = true
+		e.Hooks.Clipboard = func(string) error { return errors.New("pbcopy: exit status 1") }
+		e.Keys(keys(k)...)
+		if !e.Err || e.Message != "clipboard: pbcopy: exit status 1" {
+			t.Errorf("%s: message %q, err %v", k, e.Message, e.Err)
+		}
+		if e.Register('"') == "" {
+			t.Errorf("%s: the unnamed register is empty", k)
+		}
+	}
+	e := New("one\n")
+	e.Hooks.Clipboard = func(string) error { return errors.New("no") }
+	e.Keys(keys("v")...)
+	if ok, err := e.CopySelection(); !ok || err == nil {
+		t.Errorf("CopySelection: ok %v, err %v", ok, err)
 	}
 }

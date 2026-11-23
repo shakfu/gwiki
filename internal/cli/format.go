@@ -2,7 +2,6 @@ package cli
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"strings"
 	"unicode/utf8"
@@ -18,7 +17,6 @@ const (
 	ansiRed    = "\x1b[31m"
 	ansiGreen  = "\x1b[32m"
 	ansiYellow = "\x1b[33m"
-	ansiBlue   = "\x1b[34m"
 	ansiCyan   = "\x1b[36m"
 )
 
@@ -119,13 +117,4 @@ func (a *App) writeJSON(v any) error {
 	enc := json.NewEncoder(a.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
-}
-
-// plural returns the word with an s when n is not one, for messages that read
-// like sentences.
-func plural(n int, word string) string {
-	if n == 1 {
-		return fmt.Sprintf("%d %s", n, word)
-	}
-	return fmt.Sprintf("%d %ss", n, word)
 }

@@ -719,7 +719,6 @@ func (e *Editor) searchOnce(re *regexp.Regexp, from Pos, dir int) (Pos, bool) {
 		if len(matches) == 0 {
 			continue
 		}
-		runes := []rune(text)
 		for i := range matches {
 			if dir < 0 {
 				i = len(matches) - 1 - i
@@ -731,7 +730,6 @@ func (e *Editor) searchOnce(re *regexp.Regexp, from Pos, dir int) (Pos, bool) {
 			case step == 0 && dir < 0 && col >= from.Col:
 				continue
 			}
-			_ = runes
 			return Pos{l, col}, true
 		}
 	}

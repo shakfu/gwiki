@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/shakfu/gwiki/internal/display"
 )
 
 func (e *Editor) commandKey(k string) {
@@ -332,7 +334,7 @@ func (e *Editor) substitute(rng exRange, arg string) {
 	}
 	e.Search, e.Highlight = pattern, true
 	e.Cursor = e.Buf.clamp(e.Cursor, false)
-	e.setMessage(fmt.Sprintf("%s on %s", count(changed, "substitution"), count(lines, "line")))
+	e.setMessage(fmt.Sprintf("%s on %s", display.Plural(changed, "substitution"), display.Plural(lines, "line")))
 }
 
 func isASCIILetter(c byte) bool { return c|0x20 >= 'a' && c|0x20 <= 'z' }

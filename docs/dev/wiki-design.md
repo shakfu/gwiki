@@ -369,7 +369,7 @@ The editor is modal and follows vim, so a vim user's habits work. Where vim and 
 
 - **Repeat and undo:** `.`, `u`, `ctrl-r`.
 
-- **Registers:** unnamed, `"a`-`"z`, `"0`, `"_`. `"+` writes the system clipboard through OSC 52; pasting from it is the terminal's paste.
+- **Registers:** unnamed, `"a`-`"z`, `"0`, `"_`. `"+` writes the system clipboard, and so does the unnamed register unless `config.json` sets `"clipboard": ""`; see the README's Configuration. Pasting from it is the terminal's paste.
 
 - **Search:** `/ ?` with Go regular expressions, which differ from vim's (no `\<`, `\v`); `:noh`.
 
