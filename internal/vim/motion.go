@@ -620,15 +620,12 @@ func atColumn(line []rune, start, col int) int {
 	return i
 }
 
-// TabWidth is the columns a tab takes; the host draws it as that many spaces.
-const TabWidth = 4
-
 // runeWidth is the columns a rune takes as the host draws it: a control
 // character is drawn as '?'.
 func runeWidth(r rune) int {
 	switch {
 	case r == '\t':
-		return TabWidth
+		return display.TabWidth
 	case display.Control(r):
 		return 1
 	}

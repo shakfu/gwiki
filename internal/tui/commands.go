@@ -83,7 +83,7 @@ func init() {
 			m.reloadAll()
 			return nil
 		}},
-		{names: []string{"mouse"}, help: "turn mouse capture off, for the terminal's text selection, or on", run: func(m *WikiModel, _ string) error {
+		{names: []string{"mouse"}, help: "turn mouse capture on, or off for the terminal's text selection", run: func(m *WikiModel, _ string) error {
 			m.setMouse(!m.mouseOn)
 			return nil
 		}},

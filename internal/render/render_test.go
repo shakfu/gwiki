@@ -180,3 +180,17 @@ func TestCodeTooLargeWarns(t *testing.T) {
 		t.Fatalf("warnings %v", d.Warnings)
 	}
 }
+
+// A tab stop is counted in cells, so a tab after a wide rune still lands on it.
+func TestExpandTabsCountsCells(t *testing.T) {
+	for in, want := range map[string]string{
+		"a\tb":   "a   b",
+		"日\tb":   "日  b",
+		"ab日\tc": "ab日    c",
+		"\t\tx":  "        x",
+	} {
+		if got := expandTabs(in); got != want {
+			t.Errorf("expandTabs(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

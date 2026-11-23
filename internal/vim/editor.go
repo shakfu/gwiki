@@ -92,6 +92,10 @@ type Editor struct {
 	// per page share one History between them.
 	History *History
 
+	// Unnamedplus sends a yank or delete without a register to the system
+	// clipboard too, as vim's clipboard=unnamedplus does.
+	Unnamedplus bool
+
 	// Search is the last pattern, and Highlight is set while its matches are
 	// shown; the host reads both through Matches.
 	Search    string
@@ -150,6 +154,15 @@ func (e *Editor) Load(text string) {
 func (e *Editor) SetCursor(p Pos) {
 	e.Cursor = e.Buf.clamp(p, e.Mode == Insert || e.Mode == Replace)
 	e.wantCol = e.Cursor.Col
+}
+
+// Select selects from a to z in visual mode, as v then a motion does; a mouse
+// drag selects this way. A half-typed command is dropped.
+func (e *Editor) Select(a, z Pos) {
+	e.pending = nil
+	e.Mode = Visual
+	e.visualStart = e.Buf.clamp(a, false)
+	e.SetCursor(z)
 }
 
 // Scroll moves the view n lines down, or up when n is negative, keeping the

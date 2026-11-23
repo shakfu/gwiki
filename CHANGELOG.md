@@ -8,9 +8,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Fro
 
 ### Added
 
-**Fenced code is highlighted** in the buffer and the preview, by chroma (`internal/syntax`), in the theme's colours. Chroma adds 3.6 MB to the binary; a hand-written lexer for a few languages was the smaller choice. Page text is untrusted and chroma's regexps backtrack, each match bounded only by a 250 ms timeout, so a block over 64 KiB is left plain and lexing stops after 50 ms. Either shows a warning on the status line.
+**Fenced code is highlighted** in the buffer and the preview, by chroma (`internal/syntax`), in the theme's colours. Chroma adds 3.6 MB to the binary; a hand-written lexer for a few languages was the smaller choice. Page text is untrusted and chroma's regexps backtrack: each rule may run 250 ms before it times out, so one token can take seconds. Lexing therefore runs on one background goroutine. A block over 32 KiB, or one not lexed within 50 ms, is left plain with a warning on the status line, and the same text is not lexed again. Chroma lexes about 1 ms per KiB, so the cap keeps ordinary code within the time limit.
 
-**The mouse works in the interface.** A click opens a tree row, list row, backlink or overview tab, and folds a directory at its marker. A click in the page places the cursor, and a second click on the same link follows it, so one click shows where a link goes. A click on a repair only selects it, since applying one writes. The wheel scrolls the pane under the pointer. Mouse capture disables the terminal's own text selection, so `:mouse` toggles it. Click targets are recorded as each frame is drawn, so hit testing uses the layout on screen.
+**`"clipboard": "unnamedplus"` in `config.json`** sends every yank and delete in the editor to the system clipboard, as vim's option does. Named registers and `"_` stay out of it. Off by default, since each `dd` would replace what was copied elsewhere. Any other value is an error when the wiki opens, so a misspelling does not leave the option silently off. `config.json` is committed, so the option can also be set per user in `~/.config/gwiki/config.json` (`$XDG_CONFIG_HOME/gwiki`; `%AppData%\gwiki` on Windows), which the interface reads over the project's. That file takes only personal options, so a `name` there is an error rather than a rename for one user.
+
+**`"copy_on_select": true` in `config.json`** copies a mouse selection to the system clipboard when the button is let go, as terminals do with their own selection, and keeps it selected. The terminal takes cmd-c for its own selection, which a program cannot set, so cmd-c cannot copy gwiki's. Off by default, so a stray drag does not replace the clipboard.
+
+**The mouse works in the interface.** A click opens a tree row, list row, backlink or overview tab, and folds a directory at its marker. A click in the page places the cursor, and a second click on the same link follows it, so one click shows where a link goes. A click on a repair only selects it, since applying one writes. The wheel scrolls the pane under the pointer. A drag in the page selects in visual mode, as in vim with `mouse=a`. Selecting buffer text, not screen cells, leaves out the line numbers and the tree. Mouse capture disables the terminal's own selection, so it is off at start unless `config.json` sets `"mouse": true`, per user or per project, and `:mouse` toggles it. Click targets are recorded as each frame is drawn, so hit testing uses the layout on screen.
 
 ### Changed
 
@@ -32,7 +36,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Fro
 
 **The tasks list printed a page's `due` value unfiltered.** It now passes through the filter used for titles and tags.
 
+**`y` in visual mode stayed in visual mode.** Every other operator left it, as in vim; now `y` does too.
+
 **`>` and `<` left the cursor on the last shifted line.** As in vim, it now stays on the first.
+
+**A tab in a code block in the reader went to the wrong stop after wide characters.** Tab stops were counted in runes; `日\tb` drew three spaces, not two. They are now counted in cells.
 
 **`gj` and `gk` kept the rune offset, not the screen column**, so the cursor drifted across rows of CJK text or tabs. They now keep the screen column.
 

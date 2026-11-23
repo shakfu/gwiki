@@ -217,7 +217,7 @@ func (m *WikiModel) viewRead() []string {
 			}
 			buffer := m.viewBuffer(rw, m.contentHeight())
 			x := m.width - rw
-			m.addZone(x, 1+len(right), rw, m.contentHeight(), m.clickBuffer, m.wheelBuffer)
+			m.add(zone{x: x, y: 1 + len(right), w: rw, h: m.contentHeight(), click: m.clickBuffer, wheel: m.wheelBuffer, drag: m.dragBuffer, drop: m.dropBuffer})
 			if ph := m.panelHeight(); ph > 1 {
 				m.addZone(x, 1+len(right)+m.contentHeight()+1, rw, ph-1, func(_, y int) {
 					if i := m.cur.panelStart + y; i < len(m.cur.linkers) {

@@ -6,6 +6,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/shakfu/gwiki/internal/vim"
 )
 
 // find draws the screen and returns the cell where text first shows, in the
@@ -140,11 +142,148 @@ func TestMouseIgnoredUnderPromptAndToggled(t *testing.T) {
 	if f.page() != "index" {
 		t.Fatalf("a click under the prompt opened %q", f.page())
 	}
-	f.press("mouse", "enter")
 	if f.m.mouseOn {
-		t.Fatal(":mouse left capture on")
+		t.Fatal("capture is on before :mouse")
 	}
-	if cmd := f.press(":", "mouse", "enter"); cmd == nil || !f.m.mouseOn {
+	if cmd := f.press("mouse", "enter"); cmd == nil || !f.m.mouseOn {
+		t.Fatalf(":mouse: on %v, cmd %v", f.m.mouseOn, cmd)
+	}
+	if cmd := f.press(":", "mouse", "enter"); cmd == nil || f.m.mouseOn {
 		t.Fatalf(":mouse again: on %v, cmd %v", f.m.mouseOn, cmd)
+	}
+}
+
+func (f *wikiFixture) drag(x, y int) {
+	f.m.Update(tea.MouseMsg{X: x, Y: y, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft})
+}
+
+func (f *wikiFixture) release(x, y int) {
+	f.m.Update(tea.MouseMsg{X: x, Y: y, Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft})
+}
+
+// A drag selects from where the button went down to the pointer, in visual
+// mode, and "+y copies what it selected.
+func TestMouseDragSelects(t *testing.T) {
+	f := newWikiFixture(t)
+	var copied string
+	f.m.copy = func(text string) { copied = text }
+	f.m.focus = focusContent
+	x, y := f.find("write docs", wikiTreeWidth+1)
+	f.click(x, y)
+	f.drag(x+4, y)
+	f.drag(x+9, y)
+	f.release(x+9, y)
+	if f.m.edit.ed.Mode != vim.Visual {
+		t.Fatalf("mode %v after a drag", f.m.edit.ed.Mode)
+	}
+	f.press("\"+y")
+	if copied != "write docs" {
+		t.Fatalf("copied %q", copied)
+	}
+	// After the release, motion selects nothing.
+	f.drag(x, y)
+	if f.m.edit.ed.Mode != vim.Normal {
+		t.Fatalf("mode %v after motion with the button up", f.m.edit.ed.Mode)
+	}
+}
+
+// A drag that leaves the pane keeps selecting, to its first or last row; one
+// that stays on a character selects nothing; a click ends a selection.
+func TestMouseDragEdgesAndClicks(t *testing.T) {
+	f := newWikiFixture(t)
+	f.m.focus = focusContent
+	x, y := f.find("Start at", wikiTreeWidth+1)
+	f.click(x, y)
+	f.drag(x, y)
+	if f.m.edit.ed.Mode != vim.Normal {
+		t.Fatalf("mode %v after a drag within one character", f.m.edit.ed.Mode)
+	}
+	f.drag(x, 1000)
+	a, z, ok := f.m.edit.ed.Selection()
+	last := len(f.m.edit.rows) - 1
+	if !ok || a.Line != 2 || z.Line != f.m.edit.rows[last].line {
+		t.Fatalf("selection %+v..%+v (%v), want line 2 to the last drawn", a, z, ok)
+	}
+	f.drag(-5, -5)
+	if a, _, _ := f.m.edit.ed.Selection(); a.Line != f.m.edit.rows[0].line {
+		t.Fatalf("selection starts at %+v, want the first drawn row", a)
+	}
+	f.release(0, 0)
+	f.click(x, y)
+	if f.m.edit.ed.Mode != vim.Normal || f.m.edit.ed.Cursor.Line != 2 {
+		t.Fatalf("mode %v at %+v after a click", f.m.edit.ed.Mode, f.m.edit.ed.Cursor)
+	}
+}
+
+// A drag begun in insert mode selects nothing: it would end the insertion.
+func TestMouseDragInInsertMode(t *testing.T) {
+	f := newWikiFixture(t)
+	f.m.focus = focusContent
+	f.press("i")
+	x, y := f.find("Start at", wikiTreeWidth+1)
+	f.click(x, y)
+	f.drag(x+5, y)
+	if f.m.edit.ed.Mode != vim.Insert {
+		t.Fatalf("mode %v", f.m.edit.ed.Mode)
+	}
+}
+
+// With "clipboard": "unnamedplus", a drag then a plain y copies.
+func TestMouseDragYankUnnamedplus(t *testing.T) {
+	f := newWikiFixture(t)
+	var copied string
+	f.m.copy = func(text string) { copied = text }
+	f.w.Config.Clipboard = "unnamedplus"
+	f.m.openBuffer("index", []byte(f.m.edit.ed.Buf.Text()), f.m.edit.base)
+	f.m.focus = focusContent
+	f.m.View()
+	x, y := f.find("write docs", wikiTreeWidth+1)
+	f.click(x, y)
+	f.drag(x+9, y)
+	f.release(x+9, y)
+	f.press("y")
+	if copied != "write docs" {
+		t.Fatalf("copied %q", copied)
+	}
+}
+
+// "mouse": true in the config starts the interface with capture on.
+func TestMouseConfigStartsOn(t *testing.T) {
+	f := newWikiFixture(t)
+	f.w.Config.Mouse = true
+	m, err := NewWiki(f.w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !m.mouseOn {
+		t.Fatal("capture off with mouse set")
+	}
+}
+
+// With copy_on_select, letting go of a drag copies its selection and keeps it;
+// a click copies nothing, and without the option a drag copies nothing.
+func TestMouseCopyOnSelect(t *testing.T) {
+	for _, on := range []bool{true, false} {
+		f := newWikiFixture(t)
+		copied := "unset"
+		f.m.copy = func(text string) { copied = text }
+		f.w.Config.CopyOnSelect = on
+		f.m.focus = focusContent
+		x, y := f.find("write docs", wikiTreeWidth+1)
+		f.click(x, y)
+		f.release(x, y)
+		if copied != "unset" {
+			t.Fatalf("on=%v: a click copied %q", on, copied)
+		}
+		f.click(x, y)
+		f.drag(x+9, y)
+		f.release(x+9, y)
+		want := "unset"
+		if on {
+			want = "write docs"
+		}
+		if copied != want || f.m.edit.ed.Mode != vim.Visual {
+			t.Fatalf("on=%v: copied %q, mode %v", on, copied, f.m.edit.ed.Mode)
+		}
 	}
 }

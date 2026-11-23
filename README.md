@@ -60,7 +60,7 @@ gwiki new "Design sketch" --in lexer -m "The lexer tokenizes input. See [[Gramma
 gwiki                                       # the interface, on the overview
 ```
 
-`init` also writes `.gwiki/config.json`, whose `name` is the project name the interface shows. It is the directory's name when `init` runs; edit it if you rename the directory.
+`init` also writes `.gwiki/config.json`, whose `name` is the project name the interface shows. It is the directory's name when `init` runs; edit it if you rename the directory. `"clipboard": "unnamedplus"` sends every yank and delete in the editor to the system clipboard, as in vim; without it only `"+` does. Since that file is committed, the setting can also go in your own `~/.config/gwiki/config.json` (`$XDG_CONFIG_HOME/gwiki`, or `%AppData%\gwiki` on Windows), which overrides the project's; there, `"clipboard": ""`, `"mouse": false` or `"copy_on_select": false` turns the project's setting off. That file holds only personal options; any other field is an error.
 
 ## Project and user wikis
 
@@ -150,7 +150,7 @@ Wiki actions are commands, typed in the page or after `:` elsewhere:
 :search text    search every page             :fix         repairs for the link under the cursor
 :broken :tasks  broken links; tasks           :backlinks   to the backlinks panel
 :preview        the page drawn as markdown    :check       the broken links in it
-:external       edit in $EDITOR               :mouse       mouse capture off or on
+:external       edit in $EDITOR               :mouse       mouse capture on or off
 :overview :reload :help
 ```
 
@@ -160,7 +160,7 @@ Pages changed outside the interface, by an editor, git or an agent, reload withi
 
 Fenced code with a language is highlighted, in the buffer and the preview. Up and down on a `:` or `/` line recall earlier lines that begin with what is typed; the history is shared by every page.
 
-The mouse works: click a tree row, list row, backlink or tab to open it, and the wheel scrolls the pane under it. A click in the page places the cursor; a second click on the same link follows it. `:mouse` turns capture off, so the terminal selects text, and on again.
+`:mouse` turns the mouse on; it is off at start, so the terminal selects text as usual, unless `config.json` sets `"mouse": true`. Then click a tree row, list row, backlink or tab to open it, and the wheel scrolls the pane under it. A click in the page places the cursor; a second click on the same link follows it. A drag selects text in visual mode; `"+y` copies it, or `y` with `unnamedplus` set, or letting go of the button with `"copy_on_select": true`. The terminal handles cmd-c and ctrl-shift-c itself and copies only its own selection, so these keys do not copy gwiki's. `:mouse` again turns capture off.
 
 Macros, marks, blockwise visual, `:g`, folds and mappings are not there; `:help` lists what is.
 

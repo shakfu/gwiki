@@ -605,3 +605,66 @@ func TestWrapCountsCells(t *testing.T) {
 		}
 	}
 }
+
+// y in visual mode yanks and returns to normal mode, as in vim.
+func TestVisualYankLeavesVisual(t *testing.T) {
+	for _, seq := range []string{"vly", "Vy", "vl\"+y"} {
+		e := New("abcdef\nghi\n")
+		e.Keys(keys(seq)...)
+		if e.Mode != Normal || e.registers['"'].text == "" {
+			t.Errorf("%s: mode %v, register %q", seq, e.Mode, e.registers['"'].text)
+		}
+	}
+}
+
+// Unnamedplus sends a yank or delete with no register to the clipboard; a
+// named register and the black hole stay out of it, as in vim.
+func TestUnnamedplus(t *testing.T) {
+	for _, c := range []struct {
+		on   bool
+		keys string
+		want string
+	}{
+		{false, "yy", ""},
+		{true, "yy", "one\n"},
+		{true, "dw", "one"},
+		{true, "x", "o"},
+		{true, "\"ayy", ""},
+		{true, "\"_dd", ""},
+		{false, "\"+yy", "one\n"},
+	} {
+		e := New("one\ntwo\n")
+		e.Unnamedplus = c.on
+		var clip string
+		e.Hooks.Clipboard = func(text string) { clip = text }
+		e.Keys(keys(c.keys)...)
+		if clip != c.want {
+			t.Errorf("on=%v %s: clipboard %q, want %q", c.on, c.keys, clip, c.want)
+		}
+		if c.want != "" && e.Register('+') != c.want {
+			t.Errorf("on=%v %s: + holds %q", c.on, c.keys, e.Register('+'))
+		}
+	}
+}
+
+// CopySelection copies what y would yank, to '+' and the clipboard, and
+// leaves the selection in place.
+func TestCopySelection(t *testing.T) {
+	for _, c := range []struct{ keys, want string }{
+		{"lvl", "ne"},
+		{"Vj", "one\ntwo\n"},
+	} {
+		e := New("one\ntwo\n")
+		var clip string
+		e.Hooks.Clipboard = func(text string) { clip = text }
+		e.Keys(keys(c.keys)...)
+		mode := e.Mode
+		text, ok := e.CopySelection()
+		if !ok || text != c.want || clip != c.want || e.Register('+') != c.want || e.Mode != mode {
+			t.Errorf("%s: text %q, clip %q, + %q, mode %v", c.keys, text, clip, e.Register('+'), e.Mode)
+		}
+	}
+	if _, ok := New("x\n").CopySelection(); ok {
+		t.Error("copied outside visual mode")
+	}
+}

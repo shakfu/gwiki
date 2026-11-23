@@ -84,7 +84,7 @@ func (m *WikiModel) styleRow(runes []rune, from, to int, spans []span, marks [][
 		text := string(r)
 		switch {
 		case r == '\t':
-			text = strings.Repeat(" ", vim.TabWidth)
+			text = strings.Repeat(" ", display.TabWidth)
 		case display.Control(r):
 			text = "?"
 		}

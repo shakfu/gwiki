@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -692,5 +693,96 @@ func TestUserWikiRepository(t *testing.T) {
 	os.Mkdir(filepath.Join(gw, ".git"), 0o755)
 	if p, _ := User(); p.Repo != gw {
 		t.Fatalf("with ~/.gwiki/.git: repo %s", p.Repo)
+	}
+}
+
+// config.json's clipboard takes "unnamedplus" or nothing; a typo is an error,
+// not an option silently off.
+func TestConfigClipboard(t *testing.T) {
+	for body, ok := range map[string]bool{
+		`{"name": "x"}`: true,
+		`{"name": "x", "clipboard": "unnamedplus"}`: true,
+		`{"name": "x", "clipboard": "unamedplus"}`:  false,
+	} {
+		root := t.TempDir()
+		write(t, filepath.Join(root, DirName, PagesDir, "index.md"), "# x\n")
+		write(t, filepath.Join(root, DirName, configFile), body)
+		_, err := load(root, root)
+		if (err == nil) != ok {
+			t.Errorf("%s: err %v", body, err)
+		}
+	}
+}
+
+// The per-user config overrides the project's clipboard, either way; a
+// missing file changes nothing; a field it does not hold is an error.
+func TestUserConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	for _, c := range []struct {
+		project, user string // user "" means no file
+		want          string
+		ok            bool
+	}{
+		{"", "", "", true},
+		{"unnamedplus", "", "unnamedplus", true},
+		{"", `{"clipboard": "unnamedplus"}`, "unnamedplus", true},
+		{"unnamedplus", `{"clipboard": ""}`, "", true},
+		{"unnamedplus", `{}`, "unnamedplus", true},
+		{"", `{"clipboard": "plus"}`, "", false},
+		{"", `{"name": "mine"}`, "", false},
+		{"", `{`, "", false},
+	} {
+		os.Remove(path)
+		if c.user != "" {
+			write(t, path, c.user)
+		}
+		p := &Project{Config: Config{Name: "proj", Clipboard: c.project}}
+		err := p.UseUserConfig(path)
+		if (err == nil) != c.ok || (c.ok && p.Config.Clipboard != c.want) || p.Config.Name != "proj" {
+			t.Errorf("project %q, user %q: clipboard %q, name %q, err %v", c.project, c.user, p.Config.Clipboard, p.Config.Name, err)
+		}
+	}
+	for _, c := range []struct {
+		project bool
+		user    string
+		want    bool
+	}{
+		{false, `{"mouse": true}`, true},
+		{true, `{"mouse": false}`, false},
+		{true, `{"clipboard": ""}`, true},
+	} {
+		write(t, path, c.user)
+		p := &Project{Config: Config{Mouse: c.project}}
+		if err := p.UseUserConfig(path); err != nil || p.Config.Mouse != c.want {
+			t.Errorf("project mouse %v, user %s: mouse %v, err %v", c.project, c.user, p.Config.Mouse, err)
+		}
+	}
+	write(t, path, `{"copy_on_select": true}`)
+	p := &Project{}
+	if err := p.UseUserConfig(path); err != nil || !p.Config.CopyOnSelect {
+		t.Errorf("copy_on_select: %v, err %v", p.Config.CopyOnSelect, err)
+	}
+	write(t, path, `{"mouse": "yes"}`)
+	if err := (&Project{}).UseUserConfig(path); err == nil {
+		t.Error(`"mouse": "yes" was accepted`)
+	}
+}
+
+func TestUserConfigPath(t *testing.T) {
+	env := map[string]string{"XDG_CONFIG_HOME": "/x"}
+	if got, err := UserConfigPath(func(k string) string { return env[k] }); err != nil || got != filepath.Join("/x", "gwiki", "config.json") {
+		t.Errorf("with XDG_CONFIG_HOME: %q, %v", got, err)
+	}
+	home, _ := os.UserHomeDir()
+	want := filepath.Join(home, ".config", "gwiki", "config.json")
+	if runtime.GOOS == "windows" {
+		env = map[string]string{"AppData": `C:\a`}
+		want = filepath.Join(`C:\a`, "gwiki", "config.json")
+	} else {
+		env = map[string]string{}
+	}
+	if got, err := UserConfigPath(func(k string) string { return env[k] }); err != nil || got != want {
+		t.Errorf("default: %q, %v; want %q", got, err, want)
 	}
 }

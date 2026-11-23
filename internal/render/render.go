@@ -699,13 +699,13 @@ func expandTabs(s string) string {
 	col := 0
 	for _, r := range s {
 		if r == '\t' {
-			n := 4 - col%4
+			n := display.TabWidth - col%display.TabWidth
 			b.WriteString(strings.Repeat(" ", n))
 			col += n
 			continue
 		}
 		b.WriteRune(r)
-		col++
+		col += ansi.StringWidth(string(r))
 	}
 	return b.String()
 }

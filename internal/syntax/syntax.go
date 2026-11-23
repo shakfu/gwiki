@@ -1,16 +1,23 @@
 // Package syntax splits fenced code into classed spans for the reader and the
 // editor to colour.
 //
-// Lexing is chroma's. Page text is untrusted and chroma's regexps backtrack,
-// each match bounded only by a 250 ms timeout, so a block is lexed within a
-// size cap and a time budget, and results are cached by language and text.
+// Lexing is chroma's. Page text is untrusted and chroma's regexps backtrack:
+// each rule's match may take 250 ms before it times out, and one token tries
+// every rule of a state, so a single token can take seconds. Lexing therefore
+// runs on one worker goroutine, and a caller waits for it at most the budget.
+// A lex given up on is told to stop at its next token; until it does, other
+// blocks stay plain at once rather than each waiting. One worker bounds that
+// work to one core, and a block that ran out of time is cached as plain.
 package syntax
 
 import (
 	"fmt"
+	"hash/maphash"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/lexers"
@@ -35,15 +42,20 @@ type Span struct {
 	Class    Class
 }
 
-const (
-	maxBytes = 64 << 10
-	budget   = 50 * time.Millisecond
-)
+// maxBytes keeps a benign block within the budget: chroma lexes about 1 ms
+// per KiB.
+const maxBytes = 32 << 10
 
-// ErrTooLarge and ErrTooSlow report a block left partly or wholly plain.
+// budget is how long a lex may take, and separately how long a caller waits
+// for the worker to take it.
+var budget = 50 * time.Millisecond
+
+// ErrTooLarge, ErrTooSlow and ErrBusy report a block left plain. ErrBusy is
+// not cached: the block is lexed once the worker is free.
 var (
 	ErrTooLarge = fmt.Errorf("over %d KiB, not highlighted", maxBytes>>10)
-	ErrTooSlow  = fmt.Errorf("took over %v, highlighted in part", budget)
+	ErrTooSlow  = fmt.Errorf("took over %v, not highlighted", budget)
+	ErrBusy     = fmt.Errorf("not highlighted while a slow block is lexed")
 )
 
 type result struct {
@@ -51,45 +63,140 @@ type result struct {
 	err   error
 }
 
+// key identifies a block by a seeded hash, so the cache holds no copy of the
+// code. The seed is per process, so page text cannot pick a collision.
+type key struct {
+	sum uint64
+	n   int
+}
+
+var seed = maphash.MakeSeed()
+
+func keyOf(lang, code string) key {
+	var h maphash.Hash
+	h.SetSeed(seed)
+	h.WriteString(lang)
+	h.WriteByte(0)
+	h.WriteString(code)
+	return key{h.Sum64(), len(code)}
+}
+
+// cacheBytes caps the spans the cache holds; past it the cache is emptied.
+const cacheBytes = 4 << 20
+
 var (
 	mu    sync.Mutex
-	cache = map[string]result{}
+	cache = map[key]result{}
+	held  int
 )
 
-const cacheSize = 256
+func size(r result) int {
+	n := 0
+	for _, l := range r.lines {
+		n += len(l)
+	}
+	return n * int(unsafe.Sizeof(Span{}))
+}
+
+// A job is running until the worker finishes it or its caller abandons it,
+// whichever comes first.
+const (
+	running int32 = iota
+	finished
+	abandoned
+)
+
+type job struct {
+	lang, code string
+	state      atomic.Int32
+	done       chan result
+}
+
+var (
+	jobs  = make(chan *job)
+	start sync.Once
+	// stale counts abandoned jobs still lexing; it may dip below 0 briefly.
+	stale atomic.Int32
+)
+
+// lex is the lexer the worker runs; tests replace it.
+var lex = highlight
+
+func worker() {
+	for j := range jobs {
+		lines, err := lex(j.lang, j.code, func() bool { return j.state.Load() == abandoned })
+		if !j.state.CompareAndSwap(running, finished) {
+			stale.Add(-1)
+		}
+		j.done <- result{lines, err}
+	}
+}
 
 // Highlight returns the spans of each line of code, split on '\n', for a
 // fenced block's language. An unknown or empty language gives nil and no
-// error. An error comes with whatever spans were found before it.
+// error; an error gives nil.
 func Highlight(lang, code string) ([][]Span, error) {
 	lang = strings.TrimSpace(lang)
-	if lang == "" {
-		return nil, nil
-	}
-	key := lang + "\x00" + code
-	mu.Lock()
-	r, ok := cache[key]
-	mu.Unlock()
-	if ok {
-		return r.lines, r.err
-	}
-	r.lines, r.err = highlight(lang, code)
-	mu.Lock()
-	if len(cache) >= cacheSize {
-		clear(cache)
-	}
-	cache[key] = r
-	mu.Unlock()
-	return r.lines, r.err
-}
-
-func highlight(lang, code string) ([][]Span, error) {
-	lexer := lexers.Get(lang)
-	if lexer == nil {
+	if lang == "" || lexers.Get(lang) == nil {
 		return nil, nil
 	}
 	if len(code) > maxBytes {
 		return nil, ErrTooLarge
+	}
+	k := keyOf(lang, code)
+	mu.Lock()
+	r, ok := cache[k]
+	mu.Unlock()
+	if ok {
+		return r.lines, r.err
+	}
+	r = run(lang, code)
+	if r.err == ErrBusy {
+		return nil, r.err
+	}
+	n := size(r)
+	mu.Lock()
+	if held+n > cacheBytes {
+		clear(cache)
+		held = 0
+	}
+	cache[k] = r
+	held += n
+	mu.Unlock()
+	return r.lines, r.err
+}
+
+// run hands the block to the worker and waits for it within the budget.
+func run(lang, code string) result {
+	if stale.Load() > 0 {
+		return result{err: ErrBusy}
+	}
+	start.Do(func() { go worker() })
+	j := &job{lang: lang, code: code, done: make(chan result, 1)}
+	wait := time.NewTimer(budget)
+	defer wait.Stop()
+	select {
+	case jobs <- j:
+	case <-wait.C:
+		return result{err: ErrBusy}
+	}
+	wait.Reset(budget)
+	select {
+	case r := <-j.done:
+		return r
+	case <-wait.C:
+		if !j.state.CompareAndSwap(running, abandoned) {
+			return <-j.done // finished as the time ran out
+		}
+		stale.Add(1)
+		return result{err: ErrTooSlow}
+	}
+}
+
+func highlight(lang, code string, stop func() bool) ([][]Span, error) {
+	lexer := lexers.Get(lang)
+	if lexer == nil {
+		return nil, nil
 	}
 	it, err := chroma.Coalesce(lexer).Tokenise(nil, code)
 	if err != nil {
@@ -97,10 +204,9 @@ func highlight(lang, code string) ([][]Span, error) {
 	}
 	lines := make([][]Span, strings.Count(code, "\n")+1)
 	line, col := 0, 0
-	start := time.Now()
 	for tok := it(); tok != chroma.EOF; tok = it() {
-		if time.Since(start) > budget {
-			return lines, ErrTooSlow
+		if stop() {
+			return nil, ErrTooSlow
 		}
 		class := classOf(tok.Type)
 		for i, part := range strings.Split(tok.Value, "\n") {

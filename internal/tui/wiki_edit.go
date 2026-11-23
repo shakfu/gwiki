@@ -51,11 +51,13 @@ type editing struct {
 	links     []wiki.Link
 	linksText string
 
+	// rows are the buffer rows last drawn, for clicks. dragFrom is where the
+	// left button went down, while a drag may select from it.
+	rows     []bufRow
+	dragFrom *vim.Pos
+
 	// code is the classed spans of each fenced line when it held codeText;
 	// see codeSpans. warned is the last code warning shown.
-	// rows are the buffer rows last drawn, for clicks.
-	rows []bufRow
-
 	code     map[int][]syntax.Span
 	codeText string
 	warned   string
@@ -76,6 +78,7 @@ func (m *WikiModel) openBuffer(page string, src []byte, hash string) {
 	ed := vim.New(string(src))
 	ed.Width, ed.Height = m.bufferWidth(), m.contentHeight()
 	ed.History = m.commands
+	ed.Unnamedplus = m.w.Config.Clipboard == "unnamedplus"
 	m.edit = &editing{ed: ed, page: page, base: hash}
 	ed.Hooks = vim.Hooks{
 		Save:   m.editSave,

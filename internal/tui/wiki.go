@@ -135,9 +135,12 @@ type WikiModel struct {
 	// after is a command queued by a key for Update to return.
 	after tea.Cmd
 
-	// zones are the last frame's mouse targets; mouseOn is mouse capture.
+	// zones are the last frame's mouse targets; mouseOn is mouse capture,
+	// off unless config.json sets "mouse", so the terminal keeps its own text
+	// selection.
 	zones   []zone
 	mouseOn bool
+	held    *zone // the zone the left button went down in, until it is up
 }
 
 // reading is what the index knows about the open page.
@@ -183,7 +186,7 @@ func NewWiki(w *wiki.Wiki) (*WikiModel, error) {
 		height:    24,
 		collapsed: map[string]bool{},
 		commands:  &vim.History{},
-		mouseOn:   true,
+		mouseOn:   w.Config.Mouse,
 		getenv:    os.Getenv,
 		now:       time.Now,
 		exec:      tea.ExecProcess,
@@ -209,6 +212,13 @@ func NewWiki(w *wiki.Wiki) (*WikiModel, error) {
 
 // RunWiki opens the wiki interface and returns when the user leaves.
 func RunWiki(w *wiki.Wiki) error {
+	path, err := wiki.UserConfigPath(os.Getenv)
+	if err != nil {
+		return err
+	}
+	if err := w.UseUserConfig(path); err != nil {
+		return err
+	}
 	m, err := NewWiki(w)
 	if err != nil {
 		return err
@@ -216,7 +226,11 @@ func RunWiki(w *wiki.Wiki) error {
 	// Ask the terminal for its background now: once the program runs, the
 	// reply would arrive as keystrokes.
 	term.HasDarkBackground()
-	if _, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run(); err != nil {
+	opts := []tea.ProgramOption{tea.WithAltScreen()}
+	if m.mouseOn {
+		opts = append(opts, tea.WithMouseCellMotion())
+	}
+	if _, err := tea.NewProgram(m, opts...).Run(); err != nil {
 		return fmt.Errorf("interface: %w", err)
 	}
 	return nil

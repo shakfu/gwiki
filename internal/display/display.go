@@ -8,6 +8,9 @@ package display
 
 import "strings"
 
+// TabWidth is the columns between tab stops, in the reader and the editor.
+const TabWidth = 4
+
 // Line returns s for display on a single line. Tabs become spaces; every other
 // character Control names, newlines included, becomes '?'.
 func Line(s string) string {

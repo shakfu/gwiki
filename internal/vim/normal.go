@@ -434,9 +434,9 @@ func (e *Editor) enterMode(head string, visual bool) result { //nolint:revive //
 
 // ---------------------------------------------------------------- operators
 
-// applyOperator runs an operator over a range. The range is inclusive of z
-// for charwise operators and covers whole lines when linewise.
-func (e *Editor) applyOperator(op string, a, z Pos, linewise bool, reg rune) {
+// span turns an operator's range into the half-open one it covers, and its
+// text: inclusive of z charwise, whole lines and a final newline linewise.
+func (e *Editor) span(a, z Pos, linewise bool) (Pos, Pos, string) {
 	a, z = sorted(a, z)
 	if linewise {
 		a = Pos{a.Line, 0}
@@ -448,12 +448,33 @@ func (e *Editor) applyOperator(op string, a, z Pos, linewise bool, reg rune) {
 	if linewise {
 		text += "\n"
 	}
+	return a, z, text
+}
+
+// CopySelection puts the visual selection, as y would yank it, in the '+'
+// register and the system clipboard, and stays in visual mode. It reports
+// false outside visual mode.
+func (e *Editor) CopySelection() (string, bool) {
+	a, z, ok := e.Selection()
+	if !ok {
+		return "", false
+	}
+	_, _, text := e.span(a, z, e.Mode == VisualLine)
+	e.clip(register{text: text, linewise: e.Mode == VisualLine})
+	return text, true
+}
+
+// applyOperator runs an operator over a range. The range is inclusive of z
+// for charwise operators and covers whole lines when linewise.
+func (e *Editor) applyOperator(op string, a, z Pos, linewise bool, reg rune) {
+	a, z, text := e.span(a, z, linewise)
 
 	switch op {
 	case "y":
 		e.yank(reg, text, linewise)
 		e.Cursor = e.Buf.clamp(a, false)
 		e.setMessage(count(strings.Count(text, "\n"), "line") + " yanked")
+		e.Mode = leaveVisual(e.Mode)
 	case "d", "c":
 		e.yank(reg, text, linewise)
 		// c and the insert that follows are one undo step.
@@ -567,13 +588,13 @@ func (e *Editor) yank(reg rune, text string, linewise bool) {
 	case 0:
 		e.registers['"'] = r
 		e.registers['0'] = r
+		if e.Unnamedplus {
+			e.clip(r)
+		}
 	case '_':
 	case '+':
-		e.registers['+'] = r
 		e.registers['"'] = r
-		if e.Hooks.Clipboard != nil {
-			e.Hooks.Clipboard(text)
-		}
+		e.clip(r)
 	default:
 		if unicode.IsUpper(reg) {
 			lower := unicode.ToLower(reg)
@@ -584,6 +605,14 @@ func (e *Editor) yank(reg rune, text string, linewise bool) {
 		}
 		e.registers[reg] = r
 		e.registers['"'] = r
+	}
+}
+
+// clip fills the '+' register and hands its text to the system clipboard.
+func (e *Editor) clip(r register) {
+	e.registers['+'] = r
+	if e.Hooks.Clipboard != nil {
+		e.Hooks.Clipboard(r.text)
 	}
 }
 

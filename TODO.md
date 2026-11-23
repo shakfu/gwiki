@@ -30,8 +30,6 @@ IDs refer to `REVIEW.md` (commit `2cdc3d9`, 2026-09-27), which holds the evidenc
 
 - [ ] T27. Line inputs accept a pasted `\r`. `internal/tui/input.go`
 
-- [ ] T28. Tab width 4 is hard-coded twice: `vim.runeWidth` and the TUI's `styleRow`.
-
 - [ ] T25. Bidirectional overrides (U+202E) and zero-width characters pass the display filter. `display/display.go:30`
 
 ## Design

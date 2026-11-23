@@ -8,11 +8,13 @@
 package wiki
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 )
@@ -38,6 +40,17 @@ var ErrNotFound = errors.New("no gwiki found; run 'gwiki init'")
 // Config is .gwiki/config.json.
 type Config struct {
 	Name string `json:"name"`
+
+	// Clipboard "unnamedplus" sends every yank and delete in the terminal
+	// editor to the system clipboard, as vim's clipboard=unnamedplus does.
+	Clipboard string `json:"clipboard,omitempty"`
+
+	// Mouse starts the terminal interface with mouse capture on.
+	Mouse bool `json:"mouse,omitempty"`
+
+	// CopyOnSelect copies a mouse selection in the terminal interface to the
+	// system clipboard when the button is released.
+	CopyOnSelect bool `json:"copy_on_select,omitempty"`
 }
 
 // Project is a located wiki.
@@ -198,6 +211,9 @@ func load(root, repoFrom string) (*Project, error) {
 		if err := json.Unmarshal(raw, &p.Config); err != nil {
 			return nil, fmt.Errorf("parse %s: %w", filepath.Join(root, DirName, configFile), err)
 		}
+		if err := checkClipboard(p.Config.Clipboard); err != nil {
+			return nil, fmt.Errorf("%s: %w", filepath.Join(root, DirName, configFile), err)
+		}
 	case !os.IsNotExist(err):
 		return nil, err
 	}
@@ -216,4 +232,68 @@ func load(root, repoFrom string) (*Project, error) {
 		dir = parent
 	}
 	return p, nil
+}
+
+func checkClipboard(c string) error {
+	if c != "" && c != "unnamedplus" {
+		return fmt.Errorf("clipboard is %q; the only value is \"unnamedplus\"", c)
+	}
+	return nil
+}
+
+// UserConfigPath is the per-user config file: gwiki/config.json in
+// $XDG_CONFIG_HOME, else in ~/.config, or in %AppData% on Windows. It is not
+// os.UserConfigDir, which on macOS is ~/Library/Application Support.
+func UserConfigPath(getenv func(string) string) (string, error) {
+	dir := getenv("XDG_CONFIG_HOME")
+	switch {
+	case dir != "":
+	case runtime.GOOS == "windows" && getenv("AppData") != "":
+		dir = getenv("AppData")
+	default:
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("per-user config: %w", err)
+		}
+		dir = filepath.Join(home, ".config")
+	}
+	return filepath.Join(dir, "gwiki", configFile), nil
+}
+
+// UseUserConfig reads the per-user config at path over the project's: a
+// value set there wins, so "clipboard": "" or "mouse": false turns the
+// project's off. A missing
+// file changes nothing. The file holds only
+// personal options, so an unknown field, such as name, is an error.
+func (p *Project) UseUserConfig(path string) error {
+	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var u struct {
+		Clipboard    *string `json:"clipboard"`
+		Mouse        *bool   `json:"mouse"`
+		CopyOnSelect *bool   `json:"copy_on_select"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&u); err != nil {
+		return fmt.Errorf("parse %s: %w", path, err)
+	}
+	if u.Clipboard != nil {
+		if err := checkClipboard(*u.Clipboard); err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+		p.Config.Clipboard = *u.Clipboard
+	}
+	if u.Mouse != nil {
+		p.Config.Mouse = *u.Mouse
+	}
+	if u.CopyOnSelect != nil {
+		p.Config.CopyOnSelect = *u.CopyOnSelect
+	}
+	return nil
 }
