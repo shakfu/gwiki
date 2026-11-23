@@ -5,6 +5,7 @@ A wiki of markdown pages kept in the repository it documents.
 ## Features
 
 - **Plain files.** Pages are markdown in `.gwiki/wiki`, committed with the code. Any editor works.
+
 - **User wiki.** Notes that belong to no project live in `~/.gwiki`, opened with `-u`.
 
 - **Links into the code.** `[[wiki]]` and markdown links reach pages, headings, directories, source files and line ranges.
@@ -226,6 +227,7 @@ The agent gets tools to list, search and read pages, create them, edit exact tex
 Options are read from two `config.json` files, and the interface uses them:
 
 - `.gwiki/config.json`, the project's, committed with the wiki, so its options apply to everyone using it.
+
 - `~/.config/gwiki/config.json`, your own: `$XDG_CONFIG_HOME/gwiki/config.json` when that is set, `%AppData%\gwiki\config.json` on Windows. A value set here overrides the project's. It holds only the options below; any other field, `name` included, is an error.
 
 Neither file is needed: an option set in neither takes its default.
