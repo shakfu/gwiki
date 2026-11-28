@@ -1,0 +1,22 @@
+---
+title: Report
+author: ""
+date: 2026-01-01
+format:
+  html:
+    toc: true
+    number-sections: true
+    code-fold: true
+# pdf needs a LaTeX install, such as `quarto install tinytex`.
+#  pdf:
+#    toc: true
+#    number-sections: true
+---
+
+## Summary
+
+## Background
+
+## Findings
+
+## Recommendations

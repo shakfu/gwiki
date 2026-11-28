@@ -4,6 +4,34 @@ Notable changes to gwiki, newest first.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). From the first tagged release onwards the project follows [semantic versioning](https://semver.org/spec/v2.0.0.html), where a breaking change means one that stops an existing database from opening or reading correctly.
 
+## [0.8.0]
+
+### Added
+
+**Quarto pages.** A `.qmd` file is a page, named and linked as a `.md` one is, and keeps its extension when written or moved. When both exist, `a.md` is the page and `a.qmd` is reported as skipped, as gopherwiki looks them up. Quarto's `categories` count as tags. Code cells such as ` ```{python} ` and ` ```{.python} ` are highlighted, and the language server attaches to `.qmd` files. `--json` output gives each page's `ext`. The cache schema is 10, rebuilt on first open.
+
+**`:quarto render [to=fmt]` renders the open page, or the project of a directory with `_quarto.yml` selected in the tree,** into `.gwiki/render/`. Quarto ignores inputs under hidden directories, so the render runs in a copy of the wiki exported to the system temporary directory. In place, a project under `.gwiki` rendered nothing, and a page's output landed among the committed pages. See `docs/dev/quarto.md`.
+
+**New pages can start from a template:** `gwiki new --template <name>`, `:new Title template=<name>`, the MCP `gwiki_create` `template` argument, and `gwiki templates`, with eleven built in; see the README. gwiki fills `title` and `date` itself rather than through placeholders, which would clash with Quarto's `{{< shortcode >}}`. A template that is a symlink is skipped with a warning, since a cloned repository's template could otherwise copy any file of the reader's into a page.
+
+**ACP agents in the interface.** gwiki is an editor in the Agent Client Protocol: `:agent [name]` starts an agent the per-user `config.json` names, in a column beside the page, and `:ask` sends it a prompt with the open page. The column shows the reply, the agent's plan, its tool calls with their diffs, and its slash commands, and a permission request takes the input line. The agent is given `gwiki mcp`, gets the open page's unsaved text when it reads it, and writes through gwiki only under `.gwiki/wiki` and `.gwiki/templates`. Agents are per-user only, since a committed config naming one would run a stranger's program. The protocol comes from `github.com/coder/acp-go-sdk`, kept inside `internal/acp`, since there is no official Go SDK and that one is before 1.0. See `docs/dev/acp.md`.
+
+**`gwiki_put_file`** lets an agent add a file that is not a page, such as an image, under `.gwiki/wiki`, from base64. ACP writes only text.
+
+**`-C dir`** runs gwiki as if started in `dir`. The agent is given `gwiki -C <wiki> mcp`, since an agent starts its MCP servers in its own directory.
+
+### Changed
+
+**A tag edit keeps the tags it leaves as written,** rather than lowercasing them all, since Quarto shows category names as written.
+
+**`gwiki export` leaves a file it would write unchanged alone,** so its modification time stays.
+
+### Fixed
+
+**A tag or category with spaces was split in two** when read back from the cache, so `Data Science` listed as `data` and `science`.
+
+**A page ending in `.MD` or `.QMD` is reported, and `check --fix` offers to rename it to lower case.** Only `.md` was indexed, so `Notes.MD` was left out with no warning. A directory holding only such files was still taken for a section of pages, so a link to it was reported as a missing README. The rename rewrites the file links to it; line links are left, since `#L2` on a page names a heading. Indexing `.MD` as it stands was the alternative, but page paths and writes assume a lower-case extension, and on a case-sensitive file system a save would create a second file.
+
 ## [0.7.0]
 
 ### Added

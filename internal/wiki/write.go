@@ -112,6 +112,9 @@ type fileWrite struct {
 
 	// ModeOf is the page whose mode a new page takes; a move sets it.
 	ModeOf string
+
+	// Ext is a new page's extension, when not .md; a template sets it.
+	Ext string
 }
 
 // Read returns a page's source and its hash.
@@ -127,11 +130,13 @@ func (w *Wiki) Read(page string) ([]byte, string, error) {
 }
 
 func (w *Wiki) file(page string) string {
-	return filepath.Join(w.PagesPath(), pageRel(page))
+	return filepath.Join(w.PagesPath(), pageRelIn(func(rel string) (os.FileInfo, error) {
+		return os.Lstat(filepath.Join(w.PagesPath(), rel))
+	}, page))
 }
 
-// pageRel is a page's file relative to the pages directory.
-func pageRel(page string) string { return filepath.FromSlash(page) + ".md" }
+// pageRel is a page's file relative to the pages directory; see pageRelIn.
+func pageRel(root *os.Root, page string) string { return pageRelIn(root.Lstat, page) }
 
 // root opens the pages directory. Pages are read and written through it, so
 // even a symlink that noSymlink missed cannot lead outside the directory.
@@ -167,10 +172,11 @@ func (w *Wiki) readPage(page string) ([]byte, error) {
 }
 
 func readIn(root *os.Root, page string) ([]byte, error) {
-	if err := noSymlink(root, pageRel(page)); err != nil {
+	rel := pageRel(root, page)
+	if err := noSymlink(root, rel); err != nil {
 		return nil, err
 	}
-	return root.ReadFile(pageRel(page))
+	return root.ReadFile(rel)
 }
 
 // pageExists reports whether a page's file exists. An error other than "not
@@ -181,10 +187,11 @@ func (w *Wiki) pageExists(page string) (bool, error) {
 		return false, err
 	}
 	defer root.Close()
-	if err := noSymlink(root, pageRel(page)); err != nil {
+	rel := pageRel(root, page)
+	if err := noSymlink(root, rel); err != nil {
 		return false, err
 	}
-	_, err = root.Stat(pageRel(page))
+	_, err = root.Stat(rel)
 	if os.IsNotExist(err) {
 		return false, nil
 	}
@@ -223,6 +230,18 @@ func (w *Wiki) commit(writes []fileWrite) (Warnings, error) {
 
 	writes = slices.Clone(writes)
 	slices.SortStableFunc(writes, func(a, b fileWrite) int { return writeOrder(a) - writeOrder(b) })
+	// Named before any rename: a moved page takes the extension of the file
+	// it moves, which the batch removes last.
+	rels := make([]string, len(writes))
+	for i, fw := range writes {
+		rels[i] = pageRel(root, fw.Page)
+		if fw.ModeOf != "" && fw.Base == "" {
+			rels[i] = filepath.FromSlash(fw.Page) + path.Ext(pageRel(root, fw.ModeOf))
+		}
+		if fw.Ext != "" && fw.Base == "" {
+			rels[i] = filepath.FromSlash(fw.Page) + fw.Ext
+		}
+	}
 	temps := make([]string, len(writes))
 	defer func() {
 		for _, t := range temps {
@@ -233,11 +252,11 @@ func (w *Wiki) commit(writes []fileWrite) (Warnings, error) {
 	}()
 	for i, fw := range writes {
 		if fw.Data != nil {
-			modeOf := pageRel(fw.Page)
+			modeOf := rels[i]
 			if fw.ModeOf != "" {
-				modeOf = pageRel(fw.ModeOf)
+				modeOf = pageRel(root, fw.ModeOf)
 			}
-			if temps[i], err = stage(root, pageRel(fw.Page), modeOf, fw.Data); err != nil {
+			if temps[i], err = stage(root, rels[i], modeOf, fw.Data); err != nil {
 				return Warnings{}, err
 			}
 		}
@@ -254,8 +273,8 @@ func (w *Wiki) commit(writes []fileWrite) (Warnings, error) {
 			break
 		}
 		if fw.Data == nil {
-			err = root.Remove(pageRel(fw.Page))
-		} else if err = root.Rename(temps[i], pageRel(fw.Page)); err == nil {
+			err = root.Remove(rels[i])
+		} else if err = root.Rename(temps[i], rels[i]); err == nil {
 			temps[i] = ""
 		}
 		if err != nil {
@@ -331,7 +350,7 @@ func settle(root *os.Root, done []fileWrite) error {
 	var errs []error
 	dirs := map[string]bool{}
 	for _, fw := range done {
-		dir := filepath.Dir(pageRel(fw.Page))
+		dir := filepath.Dir(filepath.FromSlash(fw.Page))
 		if fw.Data == nil {
 			var err error
 			if dir, err = removeEmpty(root, dir); err != nil {
@@ -437,9 +456,9 @@ func stage(root *os.Root, rel, modeOf string, data []byte) (string, error) {
 }
 
 // CleanPath validates a page path typed by a person or agent and returns it
-// relative to the pages directory, slash-separated, without .md.
+// relative to the pages directory, slash-separated, without its extension.
 func CleanPath(p string) (string, error) {
-	p = strings.TrimSuffix(strings.TrimSpace(filepath.ToSlash(p)), ".md")
+	p = trimPageExt(strings.TrimSpace(filepath.ToSlash(p)))
 	clean := path.Clean(p)
 	switch {
 	case p == "" || clean == ".":

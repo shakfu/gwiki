@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/shakfu/gwiki/internal/display"
+	"github.com/shakfu/gwiki/internal/quarto"
 	"github.com/shakfu/gwiki/internal/wiki"
 )
 
@@ -26,8 +27,17 @@ var wikiCommands []wikiCommand
 
 func init() {
 	wikiCommands = []wikiCommand{
-		{names: []string{"new"}, args: "[title]", help: "new page beside the one open or selected", run: func(m *WikiModel, arg string) error {
-			m.promptNew(arg)
+		{names: []string{"new"}, args: "[title] [template=name]", help: "new page beside the one open or selected, from a template if named", run: func(m *WikiModel, arg string) error {
+			var title []string
+			template := ""
+			for _, f := range strings.Fields(arg) {
+				if t, ok := strings.CutPrefix(f, "template="); ok {
+					template = t
+				} else {
+					title = append(title, f)
+				}
+			}
+			m.promptNew(strings.Join(title, " "), template)
 			return nil
 		}},
 		{names: []string{"mv", "move"}, args: "[path]", help: "move the page, rewriting links", page: true, run: func(m *WikiModel, arg string) error {
@@ -79,6 +89,15 @@ func init() {
 		}},
 		{names: []string{"external"}, help: "edit the page in $EDITOR", page: true, run: func(m *WikiModel, _ string) error {
 			return m.editExternal()
+		}},
+		{names: []string{"quarto"}, args: quarto.Usage, help: "render the saved page, or the project selected in the tree, into .gwiki/render", run: func(m *WikiModel, arg string) error {
+			return m.quartoRender(arg)
+		}},
+		{names: []string{"agent"}, args: "[name]", help: "open or close the agent column, starting the agent the per-user config names", run: func(m *WikiModel, arg string) error {
+			return m.startAgent(strings.TrimSpace(arg))
+		}},
+		{names: []string{"ask"}, args: "text", help: "send the agent a prompt, with the open page", run: func(m *WikiModel, arg string) error {
+			return m.ask(arg)
 		}},
 		{names: []string{"reload"}, help: "reload pages and git details", run: func(m *WikiModel, _ string) error {
 			m.reloadAll()

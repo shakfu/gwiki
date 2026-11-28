@@ -7,6 +7,7 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/ansi v0.10.1
+	github.com/coder/acp-go-sdk v0.20.0
 	github.com/muesli/termenv v0.16.0
 	github.com/yuin/goldmark v1.7.17
 	gopkg.in/yaml.v3 v3.0.1

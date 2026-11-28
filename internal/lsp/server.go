@@ -369,7 +369,7 @@ func (s *Server) initialize(raw json.RawMessage) (any, error) {
 		s.createFiles = s.createFiles || op == "create"
 	}
 
-	pagesGlob := map[string]any{"scheme": "file", "pattern": map[string]any{"glob": "**/*.md"}}
+	pagesGlob := map[string]any{"scheme": "file", "pattern": map[string]any{"glob": "**/*.{md,qmd}"}}
 	return map[string]any{
 		"capabilities": map[string]any{
 			"positionEncoding": encoding,
@@ -629,9 +629,23 @@ func problem(l wiki.Link) string {
 	return l.Status
 }
 
+// pagesRel is a document's file relative to the pages directory, as Skipped
+// names it, or "" for one outside it.
+func (s *Server) pagesRel(d *document) string {
+	file, ok := uriPath(d.uri)
+	if !ok {
+		return ""
+	}
+	rel, err := filepath.Rel(s.w.PagesPath(), file)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return ""
+	}
+	return filepath.ToSlash(rel)
+}
+
 func (s *Server) publish(d *document) {
 	diags := []map[string]any{}
-	if reason, ok := s.skipped[d.page+".md"]; ok && d.page != "" {
+	if reason, ok := s.skipped[s.pagesRel(d)]; ok {
 		diags = append(diags, map[string]any{
 			"range":    Range{},
 			"severity": 2,

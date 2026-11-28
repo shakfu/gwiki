@@ -23,6 +23,9 @@ type NewPage struct {
 	Tags  []string
 	Body  string
 
+	// Template names the template the page starts from; see Templates.
+	Template string
+
 	// Status, Priority, Due and Assignees are written to the front matter of
 	// a task page. They are what a migration carries over.
 	Status    string
@@ -34,11 +37,11 @@ type NewPage struct {
 // Create writes a new page and returns it. Its file name is the title's slug;
 // a name already taken gets -2, -3 and so on.
 func (w *Wiki) Create(n NewPage) (PageInfo, Warnings, error) {
-	id, src, err := w.newSource(n, nil)
+	id, ext, src, err := w.newSourceAvoiding(n, nil)
 	if err != nil {
 		return PageInfo{}, Warnings{}, err
 	}
-	warn, err := w.commit([]fileWrite{{Page: id, Data: src}})
+	warn, err := w.commit([]fileWrite{{Page: id, Data: src, Ext: ext}})
 	if err != nil {
 		return PageInfo{}, warn, err
 	}
@@ -63,13 +66,13 @@ func (w *Wiki) CreateAll(pages []NewPage) ([]string, Warnings, error) {
 	var writes []fileWrite
 	var ids []string
 	for _, n := range pages {
-		id, src, err := w.newSourceAvoiding(n, taken)
+		id, ext, src, err := w.newSourceAvoiding(n, taken)
 		if err != nil {
 			return nil, Warnings{}, err
 		}
 		taken[id] = true
 		ids = append(ids, id)
-		writes = append(writes, fileWrite{Page: id, Data: src})
+		writes = append(writes, fileWrite{Page: id, Data: src, Ext: ext})
 	}
 	warn, err := w.commit(writes)
 	if err != nil {
@@ -81,14 +84,23 @@ func (w *Wiki) CreateAll(pages []NewPage) ([]string, Warnings, error) {
 // newSource chooses a new page's path and writes its source. front, when set,
 // adds to the front matter.
 func (w *Wiki) newSource(n NewPage, front func(*yaml.Node)) (string, []byte, error) {
-	return w.newSourceAvoiding(n, nil, front)
+	id, _, src, err := w.newSourceAvoiding(n, nil, front)
+	return id, src, err
 }
 
-// newSourceAvoiding is newSource, also avoiding names this batch has taken.
-func (w *Wiki) newSourceAvoiding(n NewPage, taken map[string]bool, front ...func(*yaml.Node)) (string, []byte, error) {
+// newSourceAvoiding is newSource, also avoiding names this batch has taken. It
+// returns the page's extension too, which a template sets.
+func (w *Wiki) newSourceAvoiding(n NewPage, taken map[string]bool, front ...func(*yaml.Node)) (string, string, []byte, error) {
 	title := strings.TrimSpace(n.Title)
 	if title == "" || strings.ContainsAny(title, "\r\n") {
-		return "", nil, errors.New("a page needs a one-line title")
+		return "", "", nil, errors.New("a page needs a one-line title")
+	}
+	ext, tmpl := ".md", []byte(nil)
+	if n.Template != "" {
+		var err error
+		if ext, tmpl, err = w.template(n.Template); err != nil {
+			return "", "", nil, err
+		}
 	}
 	slug := Slugify(title)
 	if slug == "" {
@@ -100,12 +112,12 @@ func (w *Wiki) newSourceAvoiding(n NewPage, taken map[string]bool, front ...func
 	}
 	id, err := CleanPath(base)
 	if err != nil {
-		return "", nil, err
+		return "", "", nil, err
 	}
 	for i := 2; ; i++ {
 		exists, err := w.pageExists(id)
 		if err != nil {
-			return "", nil, err
+			return "", "", nil, err
 		}
 		if !exists && !taken[id] {
 			break
@@ -113,53 +125,52 @@ func (w *Wiki) newSourceAvoiding(n NewPage, taken map[string]bool, front ...func
 		id = base + "-" + strconv.Itoa(i)
 	}
 
-	src := []byte("# " + title + "\n")
-	m := &yaml.Node{Kind: yaml.MappingNode}
-	if n.Task {
-		setScalar(m, "type", "task")
-		status := n.Status
-		if status == "" {
-			status = "open"
-		}
-		setScalar(m, "status", status)
-		if n.Priority != "" && n.Priority != "none" {
-			setScalar(m, "priority", n.Priority)
-		}
-		if n.Due != "" {
-			setScalar(m, "due", n.Due)
-		}
-		if len(n.Assignees) > 0 {
-			seq := &yaml.Node{Kind: yaml.SequenceNode, Style: yaml.FlowStyle}
-			for _, who := range n.Assignees {
-				seq.Content = append(seq.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: who})
+	add := func(m *yaml.Node) {
+		if n.Task {
+			setScalar(m, "type", "task")
+			status := n.Status
+			if status == "" {
+				status = "open"
 			}
-			m.Content = append(m.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "assignees"}, seq)
+			setScalar(m, "status", status)
+			if n.Priority != "" && n.Priority != "none" {
+				setScalar(m, "priority", n.Priority)
+			}
+			if n.Due != "" {
+				setScalar(m, "due", n.Due)
+			}
+			if len(n.Assignees) > 0 {
+				seq := &yaml.Node{Kind: yaml.SequenceNode, Style: yaml.FlowStyle}
+				for _, who := range n.Assignees {
+					seq.Content = append(seq.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: who})
+				}
+				deleteKey(m, "assignees")
+				m.Content = append(m.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "assignees"}, seq)
+			}
+		}
+		editList(m, "tags", n.Tags, nil)
+		for _, f := range front {
+			if f != nil {
+				f(m)
+			}
 		}
 	}
-	if len(n.Tags) > 0 {
-		seq := &yaml.Node{Kind: yaml.SequenceNode, Style: yaml.FlowStyle}
-		for _, t := range n.Tags {
-			seq.Content = append(seq.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: strings.ToLower(strings.TrimSpace(t))})
-		}
-		m.Content = append(m.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "tags"}, seq)
-	}
-	for _, add := range front {
-		if add != nil {
+	var src []byte
+	if tmpl != nil {
+		src, err = fromTemplate(tmpl, title, add)
+	} else {
+		src, err = editFront([]byte("# "+title+"\n"), func(m *yaml.Node) error {
 			add(m)
-		}
-	}
-	if len(m.Content) > 0 {
-		if src, err = editFront(src, func(fm *yaml.Node) error {
-			fm.Content = m.Content
 			return nil
-		}); err != nil {
-			return "", nil, err
-		}
+		})
+	}
+	if err != nil {
+		return "", "", nil, err
 	}
 	if body := strings.TrimRight(n.Body, "\n"); body != "" {
-		src = append(src, "\n"+body+"\n"...)
+		src = append(bytes.TrimRight(src, "\n"), "\n\n"+body+"\n"...)
 	}
-	return id, src, nil
+	return id, ext, src, nil
 }
 
 func (w *Wiki) info(id string) (PageInfo, error) {
@@ -258,7 +269,7 @@ func (w *Wiki) readIndexed(page string) ([]byte, string, error) {
 		return nil, "", err
 	}
 	var cached string
-	switch err := w.db.QueryRow(`SELECT hash FROM files WHERE path = ?`, page+".md").Scan(&cached); {
+	switch err := w.db.QueryRow(`SELECT f.hash FROM files f JOIN pages p ON f.path = p.path || p.ext WHERE p.path = ?`, page).Scan(&cached); {
 	case errors.Is(err, sql.ErrNoRows):
 	case err != nil:
 		return nil, "", err
@@ -306,61 +317,90 @@ func (w *Wiki) Remove(page string, force bool) ([]Link, Warnings, error) {
 }
 
 // Tag adds and removes front matter tags. Tags are compared without case and
-// written lowercase.
+// written lowercase. Quarto's categories count as tags: a tag is added to tags
+// unless it is a category, and removed from both.
 func (w *Wiki) Tag(page string, add, remove []string) (Warnings, error) {
 	src, hash, err := w.Read(page)
 	if err != nil {
 		return Warnings{}, err
 	}
 	out, err := editFront(src, func(m *yaml.Node) error {
-		var have []string
-		seq := mapValue(m, "tags")
-		switch {
-		case seq == nil:
-		case seq.Kind == yaml.SequenceNode:
-			for _, c := range seq.Content {
-				have = append(have, strings.ToLower(strings.TrimSpace(c.Value)))
-			}
-		case seq.Kind == yaml.ScalarNode && seq.Value != "":
-			have = []string{strings.ToLower(strings.TrimSpace(seq.Value))}
-		}
-		want := slices.Clone(have)
-		for _, t := range add {
-			if t = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(t, "#"))); t != "" && !slices.Contains(want, t) {
-				want = append(want, t)
-			}
-		}
-		want = slices.DeleteFunc(want, func(t string) bool {
-			return slices.ContainsFunc(remove, func(r string) bool {
-				return strings.EqualFold(strings.TrimPrefix(strings.TrimSpace(r), "#"), t)
-			})
+		categories := listValues(mapValue(m, "categories"))
+		add = slices.DeleteFunc(slices.Clone(add), func(t string) bool {
+			return slices.Contains(categories, strings.ToLower(strings.TrimSpace(strings.TrimPrefix(t, "#"))))
 		})
-		if slices.Equal(want, have) {
-			return nil
-		}
-		if len(want) == 0 {
-			deleteKey(m, "tags")
-			return nil
-		}
-		style := yaml.FlowStyle
-		if seq != nil && seq.Kind == yaml.SequenceNode {
-			style = seq.Style
-		}
-		next := &yaml.Node{Kind: yaml.SequenceNode, Style: style}
-		for _, t := range want {
-			next.Content = append(next.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: t})
-		}
-		if seq != nil {
-			*seq = *next
-		} else {
-			m.Content = append(m.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "tags"}, next)
-		}
+		editList(m, "tags", add, remove)
+		editList(m, "categories", nil, remove)
 		return nil
 	})
 	if err != nil || bytes.Equal(out, src) {
 		return Warnings{}, err
 	}
 	return w.Write(page, out, hash)
+}
+
+// listValues reads a front matter list, or a single scalar, lowercased.
+func listValues(n *yaml.Node) []string {
+	out := rawValues(n)
+	for i := range out {
+		out[i] = strings.ToLower(out[i])
+	}
+	return out
+}
+
+// rawValues reads a front matter list, or a single scalar, as written.
+func rawValues(n *yaml.Node) []string {
+	var out []string
+	switch {
+	case n == nil:
+	case n.Kind == yaml.SequenceNode:
+		for _, c := range n.Content {
+			out = append(out, strings.TrimSpace(c.Value))
+		}
+	case n.Kind == yaml.ScalarNode && n.Value != "":
+		out = []string{strings.TrimSpace(n.Value)}
+	}
+	return out
+}
+
+// editList adds values, lowercased, to a front matter list and removes values
+// from it, compared without case. It keeps the list's style and the case of
+// the values it keeps, which Quarto shows for categories.
+func editList(m *yaml.Node, key string, add, remove []string) {
+	seq := mapValue(m, key)
+	have := rawValues(seq)
+	want := slices.Clone(have)
+	for _, t := range add {
+		t = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(t, "#")))
+		if t != "" && !slices.ContainsFunc(want, func(v string) bool { return strings.EqualFold(v, t) }) {
+			want = append(want, t)
+		}
+	}
+	want = slices.DeleteFunc(want, func(t string) bool {
+		return slices.ContainsFunc(remove, func(r string) bool {
+			return strings.EqualFold(strings.TrimPrefix(strings.TrimSpace(r), "#"), t)
+		})
+	})
+	if slices.Equal(want, have) {
+		return
+	}
+	if len(want) == 0 {
+		deleteKey(m, key)
+		return
+	}
+	style := yaml.FlowStyle
+	if seq != nil && seq.Kind == yaml.SequenceNode {
+		style = seq.Style
+	}
+	next := &yaml.Node{Kind: yaml.SequenceNode, Style: style}
+	for _, t := range want {
+		next.Content = append(next.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: t})
+	}
+	if seq != nil {
+		*seq = *next
+	} else {
+		m.Content = append(m.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, next)
+	}
 }
 
 // taskOnLine is the checklist item on a line of a page.

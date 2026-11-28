@@ -26,6 +26,8 @@ type wikiFixture struct {
 	root string
 	w    *wiki.Wiki
 	m    *WikiModel
+
+	listener tea.Cmd // waits for the agent's next event
 }
 
 func newWikiFixture(t *testing.T) *wikiFixture {

@@ -20,11 +20,16 @@ type PageInfo struct {
 	Priority string   `json:"priority,omitempty"`
 	Due      string   `json:"due,omitempty"`
 	Tags     []string `json:"tags"`
+	Ext      string   `json:"ext"` // .md or .qmd
 }
 
 // File returns the page's path relative to the project root.
 func (p PageInfo) File() string {
-	return filepath.ToSlash(filepath.Join(DirName, PagesDir, p.Path+".md"))
+	ext := p.Ext
+	if ext == "" {
+		ext = ".md"
+	}
+	return filepath.ToSlash(filepath.Join(DirName, PagesDir, p.Path+ext))
 }
 
 // Heading is a heading in a page.
@@ -120,8 +125,17 @@ func (e *ErrAmbiguous) Error() string {
 	return fmt.Sprintf("%q could mean %s", e.Ref, strings.Join(names, ", "))
 }
 
+// splitTags reads the tags pageColumns joins. The separator is a control
+// character, since a tag, such as a Quarto category, may hold spaces.
+func splitTags(s string) []string {
+	if s == "" {
+		return []string{}
+	}
+	return strings.Split(s, "\x1f")
+}
+
 const pageColumns = `path, title, type, status, priority, due,
-	coalesce((SELECT group_concat(tag, ' ') FROM (SELECT tag FROM tags WHERE page = pages.path ORDER BY tag)), '')`
+	coalesce((SELECT group_concat(tag, char(31)) FROM (SELECT tag FROM tags WHERE page = pages.path ORDER BY tag)), ''), ext`
 
 func scanPages(rows interface {
 	Next() bool
@@ -134,13 +148,10 @@ func scanPages(rows interface {
 	for rows.Next() {
 		var p PageInfo
 		var tags string
-		if err := rows.Scan(&p.Path, &p.Title, &p.Type, &p.Status, &p.Priority, &p.Due, &tags); err != nil {
+		if err := rows.Scan(&p.Path, &p.Title, &p.Type, &p.Status, &p.Priority, &p.Due, &tags, &p.Ext); err != nil {
 			return nil, err
 		}
-		p.Tags = strings.Fields(tags)
-		if p.Tags == nil {
-			p.Tags = []string{}
-		}
+		p.Tags = splitTags(tags)
 		out = append(out, p)
 	}
 	return out, rows.Err()
@@ -160,12 +171,12 @@ func (w *Wiki) Pages(dir, tag string) ([]PageInfo, error) {
 }
 
 // Find resolves a reference typed by a person or agent, trying in order: a
-// path, with or without .md; a title; a file name, with spaces read as
+// path, with or without its extension; a title; a file name, with spaces read as
 // hyphens; a fragment of a path or title. All are case-insensitive. The first
 // step that matches decides, and more than one match there is an error that
 // lists them.
 func (w *Wiki) Find(ref string) (PageInfo, error) {
-	r := strings.ToLower(strings.TrimSuffix(strings.Trim(strings.TrimSpace(ref), "/"), ".md"))
+	r := strings.ToLower(trimPageExt(strings.Trim(strings.TrimSpace(ref), "/")))
 	if r == "" {
 		return PageInfo{}, errors.New("name a page")
 	}
@@ -397,13 +408,10 @@ func (w *Wiki) Search(query string, limit int) ([]Hit, error) {
 	for rows.Next() {
 		var h Hit
 		var tags string
-		if err := rows.Scan(&h.Path, &h.Title, &h.Type, &h.Status, &h.Priority, &h.Due, &tags, &h.Snippet); err != nil {
+		if err := rows.Scan(&h.Path, &h.Title, &h.Type, &h.Status, &h.Priority, &h.Due, &tags, &h.Ext, &h.Snippet); err != nil {
 			return nil, err
 		}
-		h.Tags = strings.Fields(tags)
-		if h.Tags == nil {
-			h.Tags = []string{}
-		}
+		h.Tags = splitTags(tags)
 		out = append(out, h)
 	}
 	return out, rows.Err()
@@ -411,7 +419,7 @@ func (w *Wiki) Search(query string, limit int) ([]Hit, error) {
 
 func pageColumnsFrom(alias string) string {
 	return fmt.Sprintf(`%[1]s.path, %[1]s.title, %[1]s.type, %[1]s.status, %[1]s.priority, %[1]s.due,
-		coalesce((SELECT group_concat(tag, ' ') FROM (SELECT tag FROM tags WHERE page = %[1]s.path ORDER BY tag)), '')`, alias)
+		coalesce((SELECT group_concat(tag, char(31)) FROM (SELECT tag FROM tags WHERE page = %[1]s.path ORDER BY tag)), ''), %[1]s.ext`, alias)
 }
 
 // TaskFilter narrows Tasks. Empty fields match everything.

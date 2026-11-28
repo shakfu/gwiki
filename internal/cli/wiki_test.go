@@ -561,6 +561,86 @@ func TestWikiReportsSkippedFiles(t *testing.T) {
 	}
 }
 
+// templates lists the built-in templates, and new --template makes a page
+// with the template's extension.
+func TestWikiTemplates(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	f := wikiFixture(t)
+	out := f.mustRun("templates")
+	if !regexp.MustCompile(`(?m)^review +\.md +builtin`).MatchString(out) || !regexp.MustCompile(`(?m)^report +\.qmd +builtin`).MatchString(out) {
+		t.Fatalf("templates:\n%s", out)
+	}
+	if out := f.mustRun("new", "Q3", "--template", "report"); !strings.Contains(out, ".gwiki/wiki/q3.qmd") {
+		t.Fatalf("new --template: %s", out)
+	}
+	if _, stderr, code := f.run("new", "Q4", "--template", "nope"); code == 0 || !strings.Contains(stderr, `no template "nope"`) {
+		t.Fatalf("unknown template: exit %d, %s", code, stderr)
+	}
+}
+
+// check reports a page ending in .MD; --fix renames it on a 1, and --fix=first
+// without asking.
+func TestWikiCheckFixRenamesAMisnamedPage(t *testing.T) {
+	for _, args := range [][]string{{"check", "--fix"}, {"check", "--fix=first"}} {
+		f := wikiFixture(t)
+		pages := filepath.Join(f.dir, ".gwiki", "wiki")
+		if err := os.WriteFile(filepath.Join(pages, "Notes.MD"), []byte("# Notes\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		f.mustRun("new", "Linker", "-m", "[n](Notes.MD)")
+
+		out, stderr, code := f.run("check")
+		if code != 1 || !regexp.MustCompile(`\.gwiki/wiki/Notes\.MD +skipped +not a page: the extension must be \.md`).MatchString(out) || !strings.Contains(stderr, "1 skipped file") {
+			t.Fatalf("check: exit %d, stderr %q\n%s", code, stderr, out)
+		}
+		out, _, _ = f.runIn("1\n", args...)
+		if !strings.Contains(out, "renamed  Notes.MD -> Notes.md, 1 link rewritten") {
+			t.Fatalf("%v:\n%s", args, out)
+		}
+		if got := readPage(t, f, "linker"); !strings.Contains(got, "[n](Notes.md)") {
+			t.Fatalf("%v left the link: %q", args, got)
+		}
+		if out := f.mustRun("show", "Notes"); !strings.Contains(out, "linker") {
+			t.Fatalf("%v: Notes has no backlink:\n%s", args, out)
+		}
+	}
+}
+
+// q after a rename still reports it; a rename that fails, as onto a page of
+// the same name, is reported and the rest go on.
+func TestWikiCheckFixReportsEachRename(t *testing.T) {
+	f := wikiFixture(t)
+	pages := filepath.Join(f.dir, ".gwiki", "wiki")
+	for _, name := range []string{"A.MD", "B.MD"} {
+		if err := os.WriteFile(filepath.Join(pages, name), []byte("# x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, _, _ := f.runIn("1\nq\n", "check", "--fix")
+	if !strings.Contains(out, "renamed  A.MD -> A.md") || !strings.Contains(out, "1 file renamed") {
+		t.Fatalf("1 then q:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(pages, "B.MD")); err != nil {
+		t.Fatalf("q renamed B.MD too: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(pages, "B.md"), []byte("# b\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pages, "C.MD"), []byte("# c\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lower, err1 := os.Stat(filepath.Join(pages, "B.md"))
+	upper, err2 := os.Stat(filepath.Join(pages, "B.MD"))
+	if err1 != nil || err2 != nil || os.SameFile(lower, upper) {
+		t.Skip("the file system ignores case")
+	}
+	out, stderr, _ := f.run("check", "--fix=first")
+	if !strings.Contains(stderr, "not renamed: B.MD") || !strings.Contains(out, "renamed  C.MD -> C.md") {
+		t.Fatalf("a failed rename stopped the rest:\n%s%s", out, stderr)
+	}
+}
+
 func TestWikiEditKeepsTheTextOnAConflict(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the stand-in editor is a /bin/sh script")
@@ -593,6 +673,16 @@ func TestWikiEditKeepsTheTextOnAConflict(t *testing.T) {
 
 // Commands refuse arguments they do not take, rather than ignoring them or
 // reading a flag as a tag.
+// -C runs as if started in a directory, as an agent's MCP server needs.
+func TestWikiDirFlag(t *testing.T) {
+	f := wikiFixture(t)
+	elsewhere := &fixture{t: t, dir: t.TempDir(), now: f.now}
+	out, stderr, code := elsewhere.run("-C", f.dir, "ls", "lexer")
+	if code != 0 || !strings.Contains(out, "lexer/grammar") {
+		t.Fatalf("exit %d, %s\n%s", code, stderr, out)
+	}
+}
+
 func TestWikiRefusesStrayArguments(t *testing.T) {
 	f := wikiFixture(t)
 	for _, args := range [][]string{
@@ -646,5 +736,22 @@ func TestUserWikiOnlyWithTheFlag(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".gwiki", "wiki", "stray.md")); !os.IsNotExist(err) {
 		t.Fatal("a command without -u wrote into the user wiki")
+	}
+}
+
+// templates warns of a skipped template and lists the rest.
+func TestWikiTemplatesWarnsOfASymlink(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	f := wikiFixture(t)
+	dir := filepath.Join(f.dir, ".gwiki", "templates")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(f.dir, "elsewhere.md"), filepath.Join(dir, "meeting.md")); err != nil {
+		t.Skip("symlinks are not available:", err)
+	}
+	out, stderr, code := f.run("templates")
+	if code != 0 || !strings.Contains(stderr, "meeting.md is skipped") || strings.Contains(out, "meeting") || !strings.Contains(out, "review") {
+		t.Fatalf("exit %d, stderr %q\n%s", code, stderr, out)
 	}
 }

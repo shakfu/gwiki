@@ -80,6 +80,8 @@ func (w *Wiki) PlanMove(from, to string) (*MovePlan, error) {
 	}
 
 	plan := &MovePlan{From: from, To: to, Edits: []Edit{}, Unrewritten: []Link{}}
+	// The moved page keeps its extension.
+	toFile := filepath.Join(w.PagesPath(), filepath.FromSlash(to)+path.Ext(w.file(from)))
 	sources := map[string]*pageSource{}
 	load := func(page string) (*pageSource, error) {
 		if ps, ok := sources[page]; ok {
@@ -150,11 +152,11 @@ func (w *Wiki) PlanMove(from, to string) (*MovePlan, error) {
 			if !changed {
 				continue
 			}
-		} else if ReadmeDir(to) != "" && !strings.HasSuffix(strings.ToLower(l.Target), ".md") {
+		} else if ReadmeDir(to) != "" && trimPageExt(l.Target) == l.Target {
 			// A link to the directory stays one.
-			repl = w.markdownDest(ps.src, l, l.Page, filepath.Dir(w.file(to)), true)
+			repl = w.markdownDest(ps.src, l, l.Page, filepath.Dir(toFile), true)
 		} else {
-			repl = w.markdownDest(ps.src, l, l.Page, w.file(to), false)
+			repl = w.markdownDest(ps.src, l, l.Page, toFile, false)
 		}
 		editPage := l.Page
 		if editPage == from {
@@ -185,11 +187,10 @@ func (w *Wiki) PlanMove(from, to string) (*MovePlan, error) {
 		}
 		target := filepath.Join(w.Repo, filepath.FromSlash(l.Resolved))
 		if l.Kind == KindPage || l.Kind == KindHeading {
-			id := l.Resolved
-			if id == from {
-				id = to
+			target = w.file(l.Resolved)
+			if l.Resolved == from {
+				target = toFile
 			}
-			target = w.file(id)
 		}
 		if repl := w.markdownDest(own.src, l, to, target, false); repl != string(own.src[l.DestStart:l.DestEnd]) {
 			add(from, to, l, own, repl)
@@ -313,10 +314,8 @@ func wikiRewrite(ix *index, src []byte, l Link, to string) (repl string, changed
 	if got, status := ix.wiki(l.Target); status == StatusOK && got == to {
 		return "", false, true
 	}
-	suffix := ""
-	if strings.HasSuffix(strings.ToLower(l.Target), ".md") {
-		suffix = ".md"
-	}
+	// An extension written in the link stays.
+	suffix := l.Target[len(trimPageExt(l.Target)):]
 	candidates := []string{path.Base(to) + suffix, to + suffix}
 	if dir := ReadmeDir(to); dir != "" && suffix == "" {
 		// A README is best named by its directory.

@@ -62,7 +62,7 @@ func step(pos, last int, s func(pos, last int) int) int {
 var keysGlobal = &keymap{"anywhere", []binding{
 	{keys: []string{"/"}, show: "/", help: "search titles, headings, tags and text", hint: "/ search", run: (*WikiModel).startSearch},
 	{keys: []string{"ctrl+p"}, show: "ctrl-p", help: "open a page by title or path", hint: "^p open", run: (*WikiModel).startOpen},
-	{keys: []string{"n"}, show: "n", help: "new page, beside the one open or selected", hint: "n new", run: func(m *WikiModel) { m.promptNew("") }},
+	{keys: []string{"n"}, show: "n", help: "new page, beside the one open or selected", hint: "n new", run: func(m *WikiModel) { m.promptNew("", "") }},
 	{keys: []string{"c"}, show: "c", help: "broken links", hint: "c broken", run: func(m *WikiModel) { m.showList(screenBroken) }},
 	{keys: []string{"t"}, show: "t", help: "the tasks tab", hint: "t tasks", run: func(m *WikiModel) { m.showTab(screenTasks) }},
 	{keys: []string{"O"}, show: "O", help: "the overview, on its last tab", hint: "O overview", run: (*WikiModel).showHome},
@@ -98,6 +98,18 @@ var keysPanel = &keymap{"backlinks", append(moves((*WikiModel).panelMove),
 	binding{keys: []string{"tab"}, show: "tab shift-tab", help: "next and previous pane", run: func(m *WikiModel) { m.cycleFocus(1) }},
 	binding{keys: []string{"shift+tab"}, run: func(m *WikiModel) { m.cycleFocus(-1) }},
 )}
+
+var keysAgent = &keymap{"agent", []binding{
+	{keys: []string{"i", "enter"}, show: "i enter", help: "send the agent a prompt", hint: "i ask", run: (*WikiModel).promptAgent},
+	{keys: []string{"esc"}, show: "esc", help: "cancel the agent's turn, or back to the page", hint: "esc cancel", run: (*WikiModel).cancelTurn},
+	{keys: []string{"k", "up"}, show: "j k", help: "scroll", run: func(m *WikiModel) { m.agentScroll(1) }},
+	{keys: []string{"j", "down"}, run: func(m *WikiModel) { m.agentScroll(-1) }},
+	{keys: []string{"ctrl+u", "pgup"}, show: "ctrl-u ctrl-d", help: "half a screen", run: func(m *WikiModel) { m.agentScroll(m.bodyHeight() / 2) }},
+	{keys: []string{"ctrl+d", "pgdown"}, run: func(m *WikiModel) { m.agentScroll(-m.bodyHeight() / 2) }},
+	{keys: []string{"G", "end"}, show: "G", help: "to the latest", run: func(m *WikiModel) { m.agentScroll(-1 << 30) }},
+	{keys: []string{"tab"}, show: "tab shift-tab", help: "next and previous pane", run: func(m *WikiModel) { m.cycleFocus(1) }},
+	{keys: []string{"shift+tab"}, run: func(m *WikiModel) { m.cycleFocus(-1) }},
+}}
 
 var keysList = &keymap{"lists", append(moves((*WikiModel).listMove),
 	binding{keys: []string{"enter"}, show: "enter", help: "open the row", hint: "enter open", run: (*WikiModel).listEnter},
@@ -137,7 +149,7 @@ var keysContent = &keymap{"page", []binding{
 }}
 
 // allKeymaps is the help's order after the current screen's keymaps.
-var allKeymaps = []*keymap{keysGlobal, keysTabs, keysStats, keysTree, keysContent, keysPanel, keysList, keysBroken, keysTasks, keysOffers}
+var allKeymaps = []*keymap{keysGlobal, keysTabs, keysStats, keysTree, keysContent, keysPanel, keysAgent, keysList, keysBroken, keysTasks, keysOffers}
 
 // keymaps are the keymaps in force on a screen, most specific first.
 func (m *WikiModel) keymaps(screen wscreen) []*keymap {
@@ -160,6 +172,8 @@ func (m *WikiModel) keymaps(screen wscreen) []*keymap {
 			return []*keymap{keysTree, keysGlobal}
 		case m.focus == focusPanel:
 			return []*keymap{keysPanel, keysGlobal}
+		case m.focus == focusAgent && m.agent != nil:
+			return []*keymap{keysAgent, keysGlobal}
 		}
 		// The buffer takes the keys; this is for the help.
 		return []*keymap{keysContent}

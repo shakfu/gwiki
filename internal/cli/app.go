@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -108,7 +109,7 @@ func init() {
 	wikiTable = newTable("gwiki", []*command{
 		cmdWikiInit, cmdWikiList, cmdWikiShow, cmdWikiSearch, cmdWikiLinks, cmdWikiBacklinks,
 		cmdWikiCheck, cmdWikiOrphans, cmdWikiTasks,
-		cmdWikiNew, cmdWikiEdit, cmdWikiMove, cmdWikiRemove, cmdWikiExport, cmdWikiTag, cmdWikiUntag,
+		cmdWikiNew, cmdWikiTemplates, cmdWikiEdit, cmdWikiMove, cmdWikiRemove, cmdWikiExport, cmdWikiTag, cmdWikiUntag,
 		cmdWikiDone, cmdWikiDoing, cmdWikiReopen, cmdWikiPromote,
 		cmdWikiUI, cmdWikiServe, cmdWikiMCP, cmdWikiLSP, cmdWikiCache, cmdWikiConfig,
 		helpCommand(wikiHelp, &wikiTable),
@@ -120,8 +121,21 @@ func (a *App) Run(args []string) int {
 	if a.Env == nil {
 		a.Env = os.Getenv
 	}
-	for len(args) > 0 && (args[0] == "-u" || args[0] == "--user") {
-		a.User, args = true, args[1:]
+	for len(args) > 0 {
+		switch {
+		case args[0] == "-u" || args[0] == "--user":
+			a.User, args = true, args[1:]
+		case args[0] == "-C" && len(args) > 1:
+			// As git's -C: run as if started in that directory, which an
+			// agent's MCP server, started wherever the agent is, needs.
+			dir := args[1]
+			if !filepath.IsAbs(dir) {
+				dir = filepath.Join(a.Dir, dir)
+			}
+			a.Dir, args = dir, args[2:]
+		default:
+			return a.dispatch(wikiTable, args)
+		}
 	}
 	return a.dispatch(wikiTable, args)
 }

@@ -19,6 +19,9 @@ type Front struct {
 	Due       string  `yaml:"due"`
 	Assignees Strings `yaml:"assignees"`
 
+	// Categories is Quarto's name for tags; the wiki indexes both as tags.
+	Categories Strings `yaml:"categories"`
+
 	// Raw is the whole mapping, including keys gwiki does not use.
 	Raw map[string]any `yaml:"-"`
 }

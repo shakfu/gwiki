@@ -1,0 +1,30 @@
+---
+title: Article
+author: ""
+date: 2026-01-01
+abstract: |
+  One paragraph on the question, the method and the result.
+# Add references.bib beside the page, then uncomment.
+# bibliography: references.bib
+number-sections: true
+format:
+  html:
+    toc: true
+  docx: default
+# pdf needs a LaTeX install, such as `quarto install tinytex`.
+#  pdf:
+#    documentclass: article
+---
+
+## Introduction
+
+## Method
+
+## Results
+
+## Discussion
+
+## References
+
+::: {#refs}
+:::

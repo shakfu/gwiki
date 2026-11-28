@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"encoding/base64"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -45,7 +46,7 @@ func hashIn(t *testing.T, text string) string {
 
 func TestWikiAnnotationsMatchBehaviour(t *testing.T) {
 	readOnly := map[string]bool{"gwiki_list": true, "gwiki_search": true, "gwiki_read": true, "gwiki_check": true, "gwiki_tasks": true}
-	destructive := map[string]bool{"gwiki_edit": true, "gwiki_write": true}
+	destructive := map[string]bool{"gwiki_edit": true, "gwiki_write": true, "gwiki_put_file": true}
 	for _, entry := range wikiRegistry {
 		a := entry.Annotations
 		if a == nil {
@@ -359,5 +360,32 @@ func TestWikiTasksFilters(t *testing.T) {
 	}
 	if text, isError := f.call("gwiki_tasks", map[string]any{"page": "nowhere"}); !isError || !strings.Contains(text, "nowhere") {
 		t.Fatalf("tasks on a missing page = %v %s", isError, text)
+	}
+}
+
+// gwiki_put_file writes a file that is not a page from base64, and refuses a
+// page, bad base64 and an overwrite not asked for.
+func TestWikiPutFile(t *testing.T) {
+	f := newFixture(t)
+	png := base64.StdEncoding.EncodeToString([]byte("\x89PNG"))
+	if out := f.mustCall("gwiki_put_file", map[string]any{"path": "lexer/tokens.png", "data": png}); !strings.Contains(out, ".gwiki/wiki/lexer/tokens.png (4 bytes)") {
+		t.Fatalf("put: %q", out)
+	}
+	raw, err := os.ReadFile(filepath.Join(f.wiki.PagesPath(), "lexer", "tokens.png"))
+	if err != nil || string(raw) != "\x89PNG" {
+		t.Fatalf("tokens.png = %q, %v", raw, err)
+	}
+	for _, args := range []map[string]any{
+		{"path": "lexer/tokens.png", "data": png},
+		{"path": "page.md", "data": png},
+		{"path": "x.png", "data": "not base64!"},
+		{"path": "../x.png", "data": png},
+	} {
+		if text, isError := f.call("gwiki_put_file", args); !isError {
+			t.Errorf("%v: %q", args, text)
+		}
+	}
+	if _, isError := f.call("gwiki_put_file", map[string]any{"path": "lexer/tokens.png", "data": png, "replace": true}); isError {
+		t.Error("replace was refused")
 	}
 }

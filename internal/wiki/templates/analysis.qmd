@@ -1,0 +1,29 @@
+---
+title: Analysis
+date: 2026-01-01
+jupyter: python3
+execute:
+  echo: true
+  warning: false
+format:
+  html:
+    toc: true
+    code-fold: show
+---
+
+## Question
+
+What this analysis answers.
+
+## Data
+
+```{python}
+#| label: setup
+import statistics
+```
+
+## Method
+
+## Results
+
+## Conclusion

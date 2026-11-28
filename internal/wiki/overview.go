@@ -38,7 +38,7 @@ const historyCommits = 500
 // Recent returns up to n pages, most recently modified first, with the last
 // commit to each from git when the wiki is in a repository.
 func (w *Wiki) Recent(n int) ([]Change, error) {
-	rows, err := w.db.Query(`SELECT `+pageColumnsFrom("p")+`, f.mtime FROM pages p JOIN files f ON f.path = p.path || '.md'
+	rows, err := w.db.Query(`SELECT `+pageColumnsFrom("p")+`, f.mtime FROM pages p JOIN files f ON f.path = p.path || p.ext
 		ORDER BY f.mtime DESC, p.path LIMIT ?`, n)
 	if err != nil {
 		return nil, err
@@ -49,13 +49,10 @@ func (w *Wiki) Recent(n int) ([]Change, error) {
 		var c Change
 		var tags string
 		var mtime int64
-		if err := rows.Scan(&c.Path, &c.Title, &c.Type, &c.Status, &c.Priority, &c.Due, &tags, &mtime); err != nil {
+		if err := rows.Scan(&c.Path, &c.Title, &c.Type, &c.Status, &c.Priority, &c.Due, &tags, &c.Ext, &mtime); err != nil {
 			return nil, err
 		}
-		c.Tags = strings.Fields(tags)
-		if c.Tags == nil {
-			c.Tags = []string{}
-		}
+		c.Tags = splitTags(tags)
 		c.Modified = time.Unix(0, mtime)
 		out = append(out, c)
 	}
@@ -65,7 +62,7 @@ func (w *Wiki) Recent(n int) ([]Change, error) {
 
 	commits, dirty := w.gitHistory()
 	for i := range out {
-		file := out[i].Path + ".md"
+		file := out[i].Path + out[i].Ext
 		if c, ok := commits[file]; ok {
 			out[i].Author, out[i].Committed = c.author, c.when
 		}
@@ -101,7 +98,7 @@ func (w *Wiki) gitHistory() (map[string]commit, map[string]bool) {
 	}
 	rel := func(p string) (string, bool) {
 		r, ok := strings.CutPrefix(p, pages+"/")
-		return r, ok && strings.HasSuffix(r, ".md")
+		return r, ok && isPageFile(r)
 	}
 
 	// -z leaves paths unquoted, so a page such as café.md matches its file.

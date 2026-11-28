@@ -81,7 +81,7 @@ func (w *Wiki) drift(outOfRange bool) ([]Drifted, error) {
 	files := map[string][]string{}
 	committed := make([]string, len(links))
 	for i, l := range links {
-		file := filepath.ToSlash(filepath.Join(pagesDir, filepath.FromSlash(l.Page)+".md"))
+		file := filepath.ToSlash(filepath.Join(pagesDir, filepath.FromSlash(l.Page)+filepath.Ext(w.file(l.Page))))
 		files[file] = append(files[file], l.Written())
 		committed[i] = "HEAD:" + file
 	}

@@ -19,7 +19,8 @@ import (
 // 7: files records the inode change time.
 // 8: markdown link destinations decoded; empty headings keep their line.
 // 9: links records a markdown destination as written.
-const schemaVersion = 9
+// 10: pages records the file's extension, .md or .qmd.
+const schemaVersion = 10
 
 // busyTimeout is how long, in milliseconds, a connection waits for another
 // writer's lock.
@@ -50,10 +51,12 @@ CREATE TABLE files (
 	hash  TEXT NOT NULL
 );
 
--- path is the page's identity: relative to the pages directory, without .md.
+-- path is the page's identity: relative to the pages directory, without its
+-- extension, which ext holds.
 CREATE TABLE pages (
 	num      INTEGER PRIMARY KEY,
 	path     TEXT NOT NULL UNIQUE,
+	ext      TEXT NOT NULL,
 	title    TEXT NOT NULL,
 	stem     TEXT NOT NULL,
 	type     TEXT NOT NULL,

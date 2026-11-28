@@ -65,7 +65,16 @@ func script(t *testing.T, body string) string {
 	return path
 }
 
+// slowMachine raises copyTimeout for one test: a stand-in tool started while
+// the rest of the suite runs can take longer than the 2s a real tool gets.
+func slowMachine(t *testing.T) {
+	saved := copyTimeout
+	copyTimeout = time.Minute
+	t.Cleanup(func() { copyTimeout = saved })
+}
+
 func TestRunCopy(t *testing.T) {
+	slowMachine(t)
 	out := filepath.Join(t.TempDir(), "clip")
 	if err := runCopy([]string{script(t, `cat > "$1"`), out}, "héllo\nworld"); err != nil {
 		t.Fatal(err)
@@ -86,12 +95,15 @@ func TestRunCopy(t *testing.T) {
 // xclip leaves a child holding stderr open; the copy returns when the tool
 // exits, not when the child does.
 func TestRunCopyDoesNotWaitForTheToolsChild(t *testing.T) {
+	slowMachine(t)
+	// Waiting for the child would take 5s; the bound leaves the tool 4s to
+	// start on a loaded machine.
 	tool := script(t, "cat > /dev/null; sleep 5 & exit 0")
 	start := time.Now()
 	if err := runCopy([]string{tool}, "x"); err != nil {
 		t.Fatal(err)
 	}
-	if d := time.Since(start); d > time.Second {
+	if d := time.Since(start); d > 4*time.Second {
 		t.Errorf("took %v", d)
 	}
 }

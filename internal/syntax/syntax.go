@@ -132,11 +132,25 @@ func worker() {
 	}
 }
 
+// language is a fence's language name. A Quarto code cell writes it in braces
+// with options, as {python} or {r, echo=FALSE}; a pandoc class, shown but not
+// run, as {.python .numberLines}.
+func language(info string) string {
+	info = strings.TrimSpace(info)
+	if rest, ok := strings.CutPrefix(info, "{"); ok {
+		info = strings.TrimPrefix(strings.TrimSpace(rest), ".")
+	}
+	if i := strings.IndexAny(info, "}, \t"); i >= 0 {
+		info = info[:i]
+	}
+	return info
+}
+
 // Highlight returns the spans of each line of code, split on '\n', for a
 // fenced block's language. An unknown or empty language gives nil and no
 // error; an error gives nil.
 func Highlight(lang, code string) ([][]Span, error) {
-	lang = strings.TrimSpace(lang)
+	lang = language(lang)
 	if lang == "" || lexers.Get(lang) == nil {
 		return nil, nil
 	}

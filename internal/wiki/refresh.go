@@ -83,8 +83,9 @@ type parsed struct {
 // nothing changed, without reading the file table. A write transaction is
 // taken only when something changed.
 //
-// A file that cannot be read, and a symlink, are left out as if absent and
-// listed in Skipped. While a read failed, the stored fingerprint is marked so
+// A file that cannot be read, a symlink, a file whose extension is in another
+// case, and a .qmd beside its .md are left out as if absent and listed in
+// Skipped. While a read failed, the stored fingerprint is marked so
 // that it never matches, and every refresh tries again.
 func (w *Wiki) Refresh() (Changes, error) {
 	var ch Changes
@@ -164,8 +165,21 @@ func (w *Wiki) Refresh() (Changes, error) {
 		}
 		delete(known, f.rel)
 	}
+	removed := map[string]string{} // page to its file
 	for rel := range known {
-		ch.Removed = append(ch.Removed, pageID(rel))
+		removed[pageID(rel)] = rel
+	}
+	// A page whose extension changed, a.md to a.qmd, is modified.
+	ch.Added = slices.DeleteFunc(ch.Added, func(id string) bool {
+		if _, ok := removed[id]; ok {
+			delete(removed, id)
+			ch.Modified = append(ch.Modified, id)
+			return true
+		}
+		return false
+	})
+	for id := range removed {
+		ch.Removed = append(ch.Removed, id)
 	}
 	sort.Strings(ch.Added)
 	sort.Strings(ch.Modified)
@@ -193,7 +207,7 @@ func (w *Wiki) Refresh() (Changes, error) {
 		if err := wr.forget(id); err != nil {
 			return ch, err
 		}
-		if _, err := tx.Exec(`INSERT INTO gone (path, hash) VALUES (?, ?)`, id, known[id+".md"].hash); err != nil {
+		if _, err := tx.Exec(`INSERT INTO gone (path, hash) VALUES (?, ?)`, id, known[removed[id]].hash); err != nil {
 			return ch, err
 		}
 	}
@@ -329,13 +343,19 @@ func (w *Wiki) scan(root *os.Root) ([]fileStat, []Skip, error) {
 			case e.Type()&os.ModeSymlink != 0:
 				// Reported when it would have been a page or a directory.
 				info, err := os.Stat(filepath.Join(w.PagesPath(), filepath.FromSlash(rel)))
-				if strings.HasSuffix(name, ".md") || err == nil && info.IsDir() {
+				if isPageFile(name) || misnamed(name) || err == nil && info.IsDir() {
 					skipped = append(skipped, Skip{Path: rel, Reason: ErrSymlink.Error()})
 				}
 			case e.IsDir():
 				dirs = append(dirs, rel)
-			case strings.HasSuffix(name, ".md"):
+			case pageExt(name) == ".qmd" && pageRel(root, pageID(rel)) != filepath.FromSlash(rel):
+				// Reads look up a.md first, which on a case-insensitive file
+				// system also finds A.MD.
+				skipped = append(skipped, Skip{Path: rel, Reason: ErrShadowed.Error()})
+			case isPageFile(name):
 				rels = append(rels, rel)
+			case misnamed(name):
+				skipped = append(skipped, Skip{Path: rel, Reason: ErrMisnamed.Error()})
 			}
 		}
 	}
@@ -466,8 +486,6 @@ func parallel(n int, fn func(int)) {
 	wg.Wait()
 }
 
-func pageID(rel string) string { return strings.TrimSuffix(rel, ".md") }
-
 // writer holds one refresh's prepared statements, and the keys of the pages it
 // touched, which decide the links to re-resolve.
 type writer struct {
@@ -496,7 +514,7 @@ var writerStatements = map[string]string{
 	"del file":   `DELETE FROM files WHERE path = ?`,
 	"ins file":   `INSERT INTO files (path, size, mtime, ctime, hash) VALUES (?, ?, ?, ?, ?)`,
 	"set ctime":  `UPDATE files SET ctime = ? WHERE path = ?`,
-	"ins page":   `INSERT INTO pages (path, title, stem, type, status, priority, due, body) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+	"ins page":   `INSERT INTO pages (path, ext, title, stem, type, status, priority, due, body) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	"ins head":   `INSERT INTO headings (page, slug, text, level, line) VALUES (?, ?, ?, ?, ?)`,
 	"ins tag":    `INSERT INTO tags (page, tag) VALUES (?, ?)`,
 	"ins assign": `INSERT INTO assignees (page, who) VALUES (?, ?)`,
@@ -561,7 +579,12 @@ func (wr *writer) forget(id string) error {
 			return err
 		}
 	}
-	return wr.exec("del file", id+".md")
+	for _, ext := range pageExts {
+		if err := wr.exec("del file", id+ext); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (wr *writer) insert(p parsed) error {
@@ -582,7 +605,7 @@ func (wr *writer) insert(p parsed) error {
 	if err := wr.exec("ins file", p.rel, p.size, p.mtime, p.ctime, p.hash); err != nil {
 		return err
 	}
-	res, err := wr.stmts["ins page"].Exec(id, title, stem, strings.ToLower(f.Type), strings.ToLower(f.Status),
+	res, err := wr.stmts["ins page"].Exec(id, pageExt(p.rel), title, stem, strings.ToLower(f.Type), strings.ToLower(f.Status),
 		strings.ToLower(f.Priority), f.Due, body)
 	if err != nil {
 		return err
@@ -600,8 +623,8 @@ func (wr *writer) insert(p parsed) error {
 		}
 	}
 	var tags []string
-	for _, t := range f.Tags {
-		if t = strings.ToLower(strings.TrimSpace(t)); t != "" {
+	for _, t := range append(slices.Clone(f.Tags), f.Categories...) {
+		if t = strings.ToLower(strings.TrimSpace(t)); t != "" && !slices.Contains(tags, t) {
 			tags = append(tags, t)
 			if err := wr.exec("ins tag", id, t); err != nil {
 				return err

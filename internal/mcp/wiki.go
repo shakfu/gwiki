@@ -1,10 +1,12 @@
 package mcp
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"path"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -17,7 +19,7 @@ const wikiInstructions = `This project keeps a wiki of markdown pages under .gwi
 the code. Pages link with [[Page title]] or [[path/page#Heading|label]], and
 with markdown links to pages, files and line ranges such as ../../src/lexer.go#L42.
 
-A page is named by its path under .gwiki/wiki, without .md, such as
+A page is named by its path under .gwiki/wiki, without .md or .qmd, such as
 lexer/design-sketch. Reading tools also accept a title or a fragment; writing
 tools take the exact path.
 
@@ -141,11 +143,12 @@ Search first, so the wiki does not get two pages on one subject. Returns the
 new page's path and hash.`,
 			Annotations: &annotations{DestructiveHint: ptr(false), OpenWorldHint: ptr(false)},
 			InputSchema: props([]string{"title"}, object{
-				"title": str("The page's title, on one line."),
-				"dir":   str("Directory under .gwiki/wiki to create it in, such as \"lexer\". Omit for the top."),
-				"task":  boolean("Create a task page, with type: task and status: open."),
-				"tags":  strList("Tags for the front matter."),
-				"body":  str("Markdown after the title heading."),
+				"title":    str("The page's title, on one line."),
+				"dir":      str("Directory under .gwiki/wiki to create it in, such as \"lexer\". Omit for the top."),
+				"task":     boolean("Create a task page, with type: task and status: open."),
+				"tags":     strList("Tags for the front matter."),
+				"body":     str("Markdown after the title heading, or after the template."),
+				"template": str("A template to start from, such as meeting, decision, design, review or report; the page takes its extension, .md or .qmd. The project's .gwiki/templates may add more."),
 			}),
 		},
 		run: (*Server).wikiCreate,
@@ -190,6 +193,25 @@ newline. Returns the new hash.`,
 			}),
 		},
 		run: (*Server).wikiWrite,
+	},
+
+	{
+		tool: tool{
+			Name:  "gwiki_put_file",
+			Title: "Add a file beside the pages",
+			Description: `Write a file that is not a page, such as an image a page shows, under
+.gwiki/wiki. Pages, .md and .qmd, are refused: use gwiki_create or gwiki_write.
+
+The data is base64. An existing file is refused unless replace is true. Link to
+it from a page with a relative markdown link, such as ![chart](chart.png).`,
+			Annotations: &annotations{DestructiveHint: ptr(true), OpenWorldHint: ptr(false)},
+			InputSchema: props([]string{"path", "data"}, object{
+				"path":    str("The file's path under .gwiki/wiki, such as \"lexer/tokens.png\"."),
+				"data":    str("The file's content, base64-encoded."),
+				"replace": boolean("Overwrite the file if it exists."),
+			}),
+		},
+		run: (*Server).wikiPutFile,
 	},
 
 	{
@@ -456,7 +478,9 @@ func (s *Server) wikiCheck(raw json.RawMessage) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		skipped = slices.DeleteFunc(skipped, func(sk wiki.Skip) bool { return sk.Path != p+".md" })
+		skipped = slices.DeleteFunc(skipped, func(sk wiki.Skip) bool {
+			return sk.Path != p+".md" && sk.Path != p+".qmd"
+		})
 		var on []wiki.Link
 		for _, l := range broken {
 			if l.Page == p {
@@ -582,18 +606,44 @@ func (s *Server) wikiTasks(raw json.RawMessage) (string, error) {
 	return strings.Join(lines, "\n"), nil
 }
 
-func (s *Server) wikiCreate(raw json.RawMessage) (string, error) {
+// maxPutFile bounds a file an agent writes, decoded.
+const maxPutFile = 20 << 20
+
+func (s *Server) wikiPutFile(raw json.RawMessage) (string, error) {
 	var a struct {
-		Title string   `json:"title"`
-		Dir   string   `json:"dir"`
-		Task  bool     `json:"task"`
-		Tags  []string `json:"tags"`
-		Body  string   `json:"body"`
+		Path    string `json:"path"`
+		Data    string `json:"data"`
+		Replace bool   `json:"replace"`
 	}
 	if err := decodeArgs(raw, &a); err != nil {
 		return "", err
 	}
-	info, warn, err := s.wiki.Create(wiki.NewPage{Title: a.Title, Dir: a.Dir, Task: a.Task, Tags: a.Tags, Body: a.Body})
+	if base64.StdEncoding.DecodedLen(len(a.Data)) > maxPutFile {
+		return "", fmt.Errorf("the file is over %d MB", maxPutFile>>20)
+	}
+	data, err := base64.StdEncoding.DecodeString(a.Data)
+	if err != nil {
+		return "", fmt.Errorf("data is not base64: %w", err)
+	}
+	if err := s.wiki.PutFile(a.Path, data, a.Replace); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("wrote %s (%d bytes)", path.Join(wiki.DirName, wiki.PagesDir, filepath.ToSlash(a.Path)), len(data)), nil
+}
+
+func (s *Server) wikiCreate(raw json.RawMessage) (string, error) {
+	var a struct {
+		Title    string   `json:"title"`
+		Dir      string   `json:"dir"`
+		Task     bool     `json:"task"`
+		Tags     []string `json:"tags"`
+		Body     string   `json:"body"`
+		Template string   `json:"template"`
+	}
+	if err := decodeArgs(raw, &a); err != nil {
+		return "", err
+	}
+	info, warn, err := s.wiki.Create(wiki.NewPage{Title: a.Title, Dir: a.Dir, Task: a.Task, Tags: a.Tags, Body: a.Body, Template: a.Template})
 	if err != nil {
 		return "", err
 	}

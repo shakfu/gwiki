@@ -206,17 +206,24 @@ func (m *WikiModel) viewRead() []string {
 		m.treeMove(func(pos, _ int) int { return pos + by })
 	})
 
+	aw := m.agentWidth()
 	var right []string
 	if rw > 0 {
-		if m.cur == nil {
+		switch {
+		case m.agentInstead():
+			right = m.viewAgent(rw, h)
+		case m.cur == nil:
 			right = []string{styleDim.Render(" no page open; n creates one")}
-		} else {
+		default:
 			if meta := m.metaLine(); m.metaHeight() > 0 {
 				line, _ := drawSegs(append([]seg{plain(" ")}, meta...), rw, same)
 				right = append(right, line)
 			}
 			buffer := m.viewBuffer(rw, m.contentHeight())
 			x := m.width - rw
+			if aw > 0 {
+				x -= aw + 1
+			}
 			m.add(zone{x: x, y: 1 + len(right), w: rw, h: m.contentHeight(), click: m.clickBuffer, wheel: m.wheelBuffer, drag: m.dragBuffer, drop: m.dropBuffer})
 			if ph := m.panelHeight(); ph > 1 {
 				m.addZone(x, 1+len(right)+m.contentHeight()+1, rw, ph-1, func(_, y int) {
@@ -234,6 +241,10 @@ func (m *WikiModel) viewRead() []string {
 		}
 	}
 
+	var agent []string
+	if aw > 0 {
+		agent = m.viewAgent(aw, h)
+	}
 	out := make([]string, h)
 	for i := range out {
 		var b strings.Builder
@@ -248,8 +259,19 @@ func (m *WikiModel) viewRead() []string {
 			if tw > 0 {
 				b.WriteString(styleDim.Render("│"))
 			}
+			cell := ""
 			if i < len(right) {
-				b.WriteString(clip(right[i], rw))
+				cell = clip(right[i], rw)
+			}
+			if aw > 0 {
+				cell = pad(cell, rw) // the agent column starts at a fixed column
+			}
+			b.WriteString(cell)
+		}
+		if aw > 0 {
+			b.WriteString(styleDim.Render("│"))
+			if i < len(agent) {
+				b.WriteString(clip(agent[i], aw))
 			}
 		}
 		out[i] = b.String()

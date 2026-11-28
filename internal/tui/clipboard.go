@@ -44,8 +44,9 @@ func copyTool(goos string, getenv func(string) string, look func(string) (string
 	return nil
 }
 
-// copyTimeout bounds a clipboard tool, which should return at once.
-const copyTimeout = 2 * time.Second
+// copyTimeout bounds a clipboard tool, which should return at once. Tests
+// raise it, since a loaded machine can take seconds to start a process.
+var copyTimeout = 2 * time.Second
 
 // systemCopy returns the clipboard setter for this machine: a tool when
 // copyTool finds one, else osc52.

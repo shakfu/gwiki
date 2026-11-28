@@ -40,7 +40,7 @@ func pageName(page string) string {
 func pageStem(page string) string { return strings.ToLower(pageName(page)) }
 
 // sectionReadme is the README file name of a directory holding pages, at any
-// depth: README.md as its file is spelled, or README.md when it has none yet.
+// depth: its README.md or README.qmd as spelled, or README.md when it has none.
 // ok is false for a directory without pages, such as one of images.
 func sectionReadme(dir string) (name string, ok bool) {
 	entries, err := os.ReadDir(dir)
@@ -48,13 +48,13 @@ func sectionReadme(dir string) (name string, ok bool) {
 		return "", false
 	}
 	for _, e := range entries {
-		if !e.IsDir() && strings.EqualFold(e.Name(), "readme.md") {
+		if !e.IsDir() && strings.EqualFold(pageID(e.Name()), "readme") && isPageFile(e.Name()) {
 			return e.Name(), true
 		}
 	}
 	errFound := errors.New("found")
 	err = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		if err == nil && !d.IsDir() && strings.HasSuffix(strings.ToLower(d.Name()), ".md") {
+		if err == nil && !d.IsDir() && isPageFile(d.Name()) {
 			return errFound
 		}
 		return nil

@@ -1,6 +1,7 @@
 package wiki
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -32,6 +33,9 @@ type Exported struct {
 	// Skipped are wiki links left as written: broken, ambiguous, or without a
 	// source position.
 	Skipped []Link `json:"skipped"`
+
+	// Written are the files the export holds, slash-separated relative to Dir.
+	Written []string `json:"-"`
 }
 
 // Export copies the pages directory into dir with every resolving [[wiki]]
@@ -76,8 +80,8 @@ func (w *Wiki) Export(dir string) (*Exported, error) {
 		if err != nil {
 			return nil, err
 		}
-		if strings.HasSuffix(rel, ".md") {
-			page := strings.TrimSuffix(rel, ".md")
+		// a.qmd beside a.md is copied as it is: the page, and its links, are a.md's.
+		if page := pageID(rel); isPageFile(rel) && filepath.ToSlash(w.file(page)) == filepath.ToSlash(filepath.Join(pages, rel)) {
 			fromDir := filepath.Join(out, filepath.FromSlash(path.Dir(rel)))
 			var n int
 			var skipped []Link
@@ -91,13 +95,17 @@ func (w *Wiki) Export(dir string) (*Exported, error) {
 			res.Files++
 		}
 		file := filepath.Join(out, filepath.FromSlash(rel))
+		written[rel] = true
+		// An unchanged file keeps its time, which a later step may compare.
+		if old, err := os.ReadFile(file); err == nil && bytes.Equal(old, data) {
+			continue
+		}
 		if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
 			return nil, err
 		}
 		if err := os.WriteFile(file, data, 0o644); err != nil {
 			return nil, err
 		}
-		written[rel] = true
 	}
 
 	for _, rel := range previous {
@@ -109,6 +117,7 @@ func (w *Wiki) Export(dir string) (*Exported, error) {
 		}
 		res.Removed = append(res.Removed, rel)
 	}
+	res.Written = files
 	manifest := strings.Join(files, "\n") + "\n"
 	if err := os.WriteFile(filepath.Join(out, ExportManifest), []byte(manifest), 0o644); err != nil {
 		return nil, err

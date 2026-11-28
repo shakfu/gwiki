@@ -1,0 +1,19 @@
+---
+title: Slides
+author: ""
+date: 2026-01-01
+format:
+  revealjs:
+    slide-number: true
+    incremental: false
+---
+
+## First point
+
+- 
+
+## Second point
+
+- 
+
+## Summary

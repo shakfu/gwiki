@@ -5,6 +5,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -55,6 +56,7 @@ const (
 	focusTree    wfocus = iota
 	focusContent        // the page's buffer
 	focusPanel          // the backlinks under the page
+	focusAgent          // the agent column
 )
 
 // WikiModel is the wiki interface state.
@@ -134,6 +136,12 @@ type WikiModel struct {
 
 	// after is a command queued by a key for Update to return.
 	after tea.Cmd
+
+	// rendering stops the :quarto render running, if one is.
+	rendering context.CancelFunc
+
+	// agent is the agent column, once :agent opens it.
+	agent *agentPane
 
 	// zones are the last frame's mouse targets; mouseOn is mouse capture,
 	// on unless config.json sets "mouse": false, which leaves the terminal its
@@ -514,6 +522,9 @@ func (m *WikiModel) contentWidth() int {
 	if m.treeWidth() > 0 && w > 0 {
 		w-- // the separator
 	}
+	if aw := m.agentWidth(); aw > 0 {
+		w -= aw + 1
+	}
 	return max(0, w)
 }
 
@@ -550,9 +561,16 @@ func (m *WikiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		m.key(msg)
+		m.offerPermission() // one asked while another prompt held the line
 		cmd := m.after
 		m.after = nil
 		if m.quitting {
+			if m.rendering != nil {
+				m.rendering()
+			}
+			if m.agent != nil && m.agent.sess != nil {
+				m.agent.sess.Close()
+			}
 			return m, tea.Quit
 		}
 		return m, cmd
@@ -567,6 +585,16 @@ func (m *WikiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case wikiEditedMsg:
 		m.edited(msg)
 		return m, nil
+	case quartoDoneMsg:
+		m.quartoDone(msg)
+		return m, nil
+	case agentStartedMsg:
+		return m, m.agentStarted(msg)
+	case agentEventMsg:
+		cmd := m.agentEvent(msg)
+		after := m.after
+		m.after = nil
+		return m, tea.Batch(cmd, after)
 	case fileEditedMsg:
 		if msg.err != nil {
 			m.setError(fmt.Errorf("the editor exited with an error: %w", msg.err))
@@ -804,6 +832,9 @@ func (m *WikiModel) cycleFocus(by int) {
 	}
 	if m.hasPanel() {
 		panes = append(panes, focusPanel)
+	}
+	if m.agent != nil && m.agent.open {
+		panes = append(panes, focusAgent)
 	}
 	for i, p := range panes {
 		if p == m.focus {
@@ -1364,6 +1395,7 @@ type wikiPrompt struct {
 	label   string
 	history rune
 	action  func(answer string) error
+	cancel  func() // on esc, when the question needs an answer either way
 }
 
 func (m *WikiModel) askWiki(label, initial string, action func(answer string) error) {
@@ -1377,6 +1409,9 @@ func (m *WikiModel) keyPrompt(msg tea.KeyMsg) {
 	switch {
 	case msg.Type == tea.KeyEsc:
 		m.prompt = nil
+		if p.cancel != nil {
+			p.cancel()
+		}
 		m.setStatus("cancelled")
 	case msg.Type == tea.KeyEnter:
 		m.prompt = nil
@@ -1397,7 +1432,7 @@ func (m *WikiModel) keyPrompt(msg tea.KeyMsg) {
 
 // promptNew creates a page in the directory of the page open or selected,
 // asking for its title unless one is given.
-func (m *WikiModel) promptNew(title string) {
+func (m *WikiModel) promptNew(title, template string) {
 	dir := ""
 	if m.cur != nil {
 		dir = path.Dir(m.cur.info.Path)
@@ -1419,7 +1454,7 @@ func (m *WikiModel) promptNew(title string) {
 		if m.edit != nil && m.edit.ed.Dirty {
 			return errUnsaved
 		}
-		info, warn, err := m.w.Create(wiki.NewPage{Title: title, Dir: dir})
+		info, warn, err := m.w.Create(wiki.NewPage{Title: title, Dir: dir, Template: template})
 		if err != nil {
 			return err
 		}

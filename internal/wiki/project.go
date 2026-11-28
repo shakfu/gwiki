@@ -69,6 +69,19 @@ type Project struct {
 	User bool
 
 	Config Config
+
+	// Agents are the ACP agents the interface can start, by name. Only the
+	// per-user config sets them: a project's config.json is committed, so an
+	// agent named there would run a stranger's program.
+	Agents map[string]Agent
+}
+
+// Agent is how to start an ACP agent: a program speaking the Agent Client
+// Protocol on its standard input and output.
+type Agent struct {
+	Command string            `json:"command"`
+	Args    []string          `json:"args,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
 }
 
 // Label names the wiki where the interface and the browser view show it:
@@ -82,6 +95,9 @@ func (p *Project) Label() string {
 
 // PagesPath returns the absolute pages directory.
 func (p *Project) PagesPath() string { return filepath.Join(p.Root, DirName, PagesDir) }
+
+// RenderPath is where `:quarto render` writes, under .gwiki.
+func (p *Project) RenderPath() string { return filepath.Join(p.Root, DirName, "render") }
 
 // Cache returns the absolute cache path.
 func (p *Project) Cache() string { return filepath.Join(p.Root, DirName, CacheFile) }
@@ -214,6 +230,10 @@ func load(root, repoFrom string) (*Project, error) {
 		if err := json.Unmarshal(raw, &p.Config); err != nil {
 			return nil, fmt.Errorf("parse %s: %w", filepath.Join(root, DirName, configFile), err)
 		}
+		var keys map[string]json.RawMessage
+		if json.Unmarshal(raw, &keys) == nil && keys["agents"] != nil {
+			return nil, fmt.Errorf("%s: agents are set in the per-user config.json only, since this one is committed", filepath.Join(root, DirName, configFile))
+		}
 		if c := p.Config.Clipboard; c != nil {
 			if err := checkClipboard(*c); err != nil {
 				return nil, fmt.Errorf("%s: %w", filepath.Join(root, DirName, configFile), err)
@@ -280,9 +300,10 @@ func UserConfigPath(getenv func(string) string) (string, error) {
 // userConfig is the per-user config.json. A field left out leaves the
 // project's value.
 type userConfig struct {
-	Clipboard    *string `json:"clipboard"`
-	Mouse        *bool   `json:"mouse"`
-	CopyOnSelect *bool   `json:"copy_on_select"`
+	Clipboard    *string          `json:"clipboard"`
+	Mouse        *bool            `json:"mouse"`
+	CopyOnSelect *bool            `json:"copy_on_select"`
+	Agents       map[string]Agent `json:"agents,omitempty"`
 }
 
 // DefaultUserConfig is a per-user config.json holding every option at its
@@ -293,7 +314,7 @@ func DefaultUserConfig() []byte {
 	if c.Unnamedplus() {
 		clipboard = "unnamedplus"
 	}
-	raw, _ := json.MarshalIndent(userConfig{&clipboard, &mouse, &copyOnSelect}, "", "  ")
+	raw, _ := json.MarshalIndent(userConfig{Clipboard: &clipboard, Mouse: &mouse, CopyOnSelect: &copyOnSelect}, "", "  ")
 	return append(raw, '\n')
 }
 
@@ -328,5 +349,11 @@ func (p *Project) UseUserConfig(path string) error {
 	if u.CopyOnSelect != nil {
 		p.Config.CopyOnSelect = u.CopyOnSelect
 	}
+	for name, a := range u.Agents {
+		if strings.TrimSpace(a.Command) == "" {
+			return fmt.Errorf("%s: agent %q has no command", path, name)
+		}
+	}
+	p.Agents = u.Agents
 	return nil
 }

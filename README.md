@@ -4,7 +4,7 @@ A wiki of markdown pages kept in the repository it documents.
 
 ## Features
 
-- **Plain files.** Pages are markdown in `.gwiki/wiki`, committed with the code. Any editor works.
+- **Plain files.** Pages are markdown, or Quarto `.qmd`, in `.gwiki/wiki`, committed with the code. Any editor works.
 
 - **User wiki.** Notes that belong to no project live in `~/.gwiki`, opened with `-u`.
 
@@ -16,6 +16,10 @@ A wiki of markdown pages kept in the repository it documents.
 
 - **Tasks.** Checklist items and task pages, with status, priority and due dates.
 
+- **Templates.** New pages can start from a template, built in or your own.
+
+- **Quarto.** `:quarto render` renders a page, or a Quarto project, to html, pdf or any other format quarto writes.
+
 - **Search.** Ranked full-text search over titles, headings, tags and bodies.
 
 - **Terminal interface.** An overview, a page tree, and a vim buffer that follows links and shows backlinks.
@@ -25,6 +29,8 @@ A wiki of markdown pages kept in the repository it documents.
 - **Browser view.** `gwiki serve` shows and edits the wiki in a browser, with nothing to install.
 
 - **Agent server.** An MCP server lets a code agent read and edit pages without overwriting yours.
+
+- **Agents in the interface.** gwiki is an ACP client: an agent such as Claude, Codex or Gemini runs in a column beside the page.
 
 - **Command line.** Every operation, with `--json` on read commands.
 
@@ -80,7 +86,7 @@ Nothing falls back to it. A command run where there is no project wiki reports "
 
 ## Pages and links
 
-A page is a markdown file under `.gwiki/wiki`; its path without `.md` names it, such as `lexer/design-sketch`. Its title is the front matter `title`, else its first level-one heading, else its file name. Front matter can also set `tags`, and `type: task` with `status`, `priority` and `due` for a task page. Checklist items (`- [ ] text`) in any page are tasks too.
+A page is a markdown file under `.gwiki/wiki`, or a Quarto file ending in `.qmd`; its path without the extension names it, such as `lexer/design-sketch`. Its title is the front matter `title`, else its first level-one heading, else its file name. Front matter can also set `tags`, and `type: task` with `status`, `priority` and `due` for a task page. Checklist items (`- [ ] text`) in any page are tasks too.
 
 | link | reaches |
 |---|---|
@@ -93,6 +99,39 @@ A page is a markdown file under `.gwiki/wiki`; its path without `.md` names it, 
 A reference names a page by its path, its title, its file name, or a fragment; an ambiguous one lists the candidates.
 
 Pages nest in directories to any depth. A directory's `README.md` is the directory's own page, as GitHub shows it when the directory is browsed: `[[lexer]]` and a link to `lexer/` reach it, it is titled by the directory's name when it has no title, and the tree draws it on the directory's row. This repository's `.gwiki/wiki` is an example: sections for guides, architecture, decisions and tasks, each with a README.
+
+## Templates
+
+```sh
+gwiki new "Sprint review" --template meeting
+gwiki templates                             # name, extension, and where each comes from
+```
+
+In the interface, `:new Sprint review template=meeting`; the MCP `gwiki_create` tool takes `template` too.
+
+| built in | |
+|---|---|
+| markdown | `meeting`, `decision`, `design`, `howto`, `review`, `postmortem`, `daily` |
+| Quarto | `report`, `analysis`, `slides`, `article` |
+
+The page takes the template's extension. Its title goes in the front matter `title`, else in the first `# ` heading, else in a new `title` key. A `date:` key is set to today, except Quarto's `today`, `now` and `last-modified`, which quarto fills in when it renders. The Quarto templates render to html; pdf is commented out, since it needs LaTeX.
+
+A template is an ordinary page, `<name>.md` or `<name>.qmd`. One in `.gwiki/templates/`, committed with the project, or in `templates/` beside the per-user `config.json`, replaces a built-in one of the same name. A template that is a symlink is skipped with a warning.
+
+## Quarto
+
+A `.qmd` page is indexed, linked and edited as a markdown page is. When `a.md` and `a.qmd` both exist, `a.md` is the page and `a.qmd` is reported as skipped. Quarto's `categories` count as tags; other keys, such as `format` and `execute`, are kept for quarto. Code cells such as ` ```{python} ` are highlighted.
+
+With `quarto` in `PATH`, `:quarto render` renders the saved page:
+
+```text
+:quarto render            every format the front matter or _quarto.yml lists
+:quarto render to=pdf     one format; --to pdf also works
+```
+
+The nearest `_quarto.yml` applies. With a directory holding `_quarto.yml` selected in the tree, the command renders that whole project.
+
+Quarto skips files under hidden directories such as `.gwiki`. The wiki is therefore exported to a directory under the system temporary directory, with `[[wiki]]` links as markdown links, and rendered there. The output is copied to `.gwiki/render/`, which ignores itself in git. A failed render keeps quarto's log there. A path that leaves the wiki, such as `../../data.csv` in a code cell, does not resolve in the copy. Rendering runs the page's code cells, so it runs only when you type the command. See [docs/dev/quarto.md](docs/dev/quarto.md).
 
 ## The interface
 
@@ -152,6 +191,7 @@ Wiki actions are commands, typed in the page or after `:` elsewhere:
 :broken :tasks  broken links; tasks           :backlinks   to the backlinks panel
 :preview        the page drawn as markdown    :check       the broken links in it
 :external       edit in $EDITOR               :mouse       mouse capture off or on
+:quarto render [to=fmt]  the page, or the project selected in the tree, into .gwiki/render
 :overview :reload :help
 ```
 
@@ -220,7 +260,33 @@ You edit a page in a text box. If the page was saved elsewhere since you opened 
 claude mcp add gwiki -- gwiki mcp
 ```
 
-The agent gets tools to list, search and read pages, create them, edit exact text or write whole pages, rename pages, list and repair broken links and line anchors whose code moved, and change task status. If a page changed since the agent read it, the write is refused, and the agent gets the current page to try again. There is no delete tool.
+The agent gets tools to list, search and read pages, create them, from a template if it names one, edit exact text or write whole pages, add a file such as an image beside them, rename pages, list and repair broken links and line anchors whose code moved, and change task status. If a page changed since the agent read it, the write is refused, and the agent gets the current page to try again. There is no delete tool.
+
+### In the interface
+
+gwiki is also an editor in the [Agent Client Protocol](https://agentclientprotocol.com) (ACP): it starts an agent and talks with it in a column beside the page. Name the agents in your per-user `config.json`:
+
+```json
+{
+  "agents": {
+    "opencode": {"command": "opencode", "args": ["acp"]},
+    "claude": {"command": "claude-agent-acp"}
+  }
+}
+```
+
+Check each agent's documentation for its ACP command. A project's `.gwiki/config.json` cannot name agents: it is committed, so one named there would run a stranger's program.
+
+| | |
+|---|---|
+| `:agent [name]` | open or close the column, starting the agent |
+| `:ask text` | send a prompt, with the open page |
+| `i` or `enter` in the column | the same, on the input line |
+| `esc` in the column | cancel the agent's turn |
+
+The agent is given gwiki's MCP server, so it has the tools above. It reads any file in the repository, and gets the open page's unsaved text. It writes, through gwiki, only under `.gwiki/wiki` and `.gwiki/templates`: a page goes through the same checks as any other write, and the open page is not written over unsaved edits. An edit it asks permission for outside those directories is rejected without asking. An agent's own tools write to disk directly, and only its own settings govern them; see [docs/dev/acp.md](docs/dev/acp.md).
+
+The column sits beside the page on a terminal at least 120 columns wide, and takes the page's place while focused on a narrower one.
 
 ## Configuration
 
@@ -228,7 +294,7 @@ Options are read from two `config.json` files, and the interface uses them:
 
 - `.gwiki/config.json`, the project's, committed with the wiki, so its options apply to everyone using it.
 
-- `~/.config/gwiki/config.json`, your own: `$XDG_CONFIG_HOME/gwiki/config.json` when that is set, `%AppData%\gwiki\config.json` on Windows. A value set here overrides the project's. It holds only the options below; any other field, `name` included, is an error.
+- `~/.config/gwiki/config.json`, your own: `$XDG_CONFIG_HOME/gwiki/config.json` when that is set, `%AppData%\gwiki\config.json` on Windows. A value set here overrides the project's. It holds only the options below and `agents` (see [In the interface](#in-the-interface)); any other field, `name` included, is an error.
 
 Neither file is needed: an option set in neither takes its default.
 
@@ -270,6 +336,8 @@ gwiki check --strict                        # also exit 1 when line anchors drif
 gwiki orphans
 gwiki new "Parser notes" --in lexer -t parser -m "First line."
 gwiki new "Ship it" --task
+gwiki new "Sprint review" --template meeting   # start from a template; see gwiki templates
+gwiki templates                             # built-in, per-user and project templates
 gwiki edit "parser notes"                   # opens $EDITOR on the page
 gwiki mv lexer/parser-notes archive/ --dry-run   # the links it would rewrite
 gwiki export site                           # a copy with [[wiki]] links as markdown links, for GitHub
@@ -284,11 +352,12 @@ gwiki serve                                 # the wiki in a browser
 gwiki ui                                    # the terminal interface
 gwiki lsp                                   # the language server, started by an editor
 gwiki mcp                                   # the agent server, started by a client
+gwiki -C ../other ls                        # as if started in another directory
 ```
 
 Read commands take `--json`. [The design](docs/dev/wiki-design.md) covers the cache, link resolution and writes in detail.
 
-gwiki follows no symlinks in `.gwiki/wiki`, and leaves out a page it cannot read. Every command warns of these files on standard error, and `gwiki check` lists them. A write that lands but cannot update the cache succeeds with a warning; the next refresh repairs the cache.
+gwiki follows no symlinks in `.gwiki/wiki`, and leaves out a page it cannot read, a `.qmd` beside a `.md` of the same name, and a file whose extension is not lower case, such as `Notes.MD`. Every command warns of these files on standard error, and `gwiki check` lists them; `gwiki check --fix` offers to rename `Notes.MD` to `Notes.md`, rewriting the links to it. A write that lands but cannot update the cache succeeds with a warning; the next refresh repairs the cache.
 
 ## Development
 

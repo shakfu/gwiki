@@ -169,3 +169,14 @@ func TestHighlightCacheIsBounded(t *testing.T) {
 		}
 	}
 }
+
+func TestQuartoCellLanguage(t *testing.T) {
+	for info, want := range map[string]string{"go": "go", " python ": "python", "{python}": "python", "{r, echo=FALSE}": "r", "{r,": "r", "{}": "", "{.python}": "python", "{.python .numberLines}": "python", ".hidden": ".hidden"} {
+		if got := language(info); got != want {
+			t.Errorf("language(%q) = %q, want %q", info, got, want)
+		}
+	}
+	if spans, err := Highlight("{python}", "print(1)"); err != nil || spans == nil {
+		t.Errorf("Highlight({python}) = %v, %v", spans, err)
+	}
+}

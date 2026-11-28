@@ -22,9 +22,10 @@ import (
 
 func wikiHelp(a *App) {
 	a.printf("gwiki keeps a wiki of markdown pages in your project, under .gwiki/wiki.\n\n")
-	a.printf("usage: gwiki [-u] <command> [arguments]\n")
-	a.printf("       gwiki [-u]          open the wiki interface\n\n")
+	a.printf("usage: gwiki [-u] [-C dir] <command> [arguments]\n")
+	a.printf("       gwiki [-u] [-C dir] open the wiki interface\n\n")
 	a.printf("-u, --user opens your user wiki, ~/.gwiki, in place of the project's.\n")
+	a.printf("-C dir runs as if gwiki were started in dir.\n")
 	a.printf("Create it with 'gwiki -u init'.\n\n")
 	a.printf("A page is named by its path, its title, its file name, or a fragment. A task\n")
 	a.printf("is a task page, \"page:line\" for a checklist item, or a fragment of its text.\n")
@@ -54,12 +55,24 @@ check too. A shallow clone has no history to compare against, so they are
 skipped with a note.
 
 Files in the pages directory that the wiki leaves out, such as a symlink or a
-page it cannot read, are listed with status skipped and fail the check.`}
+page it cannot read, are listed with status skipped and fail the check. A file
+ending in .md or .qmd in another case, such as Notes.MD, is one; --fix offers
+to rename it to lower case first, rewriting the links to it.`}
 	cmdWikiOrphans = &command{name: "orphans", args: "[--json]", summary: "pages no other page links to", run: wikiOrphans}
 	cmdWikiTasks   = &command{name: "tasks", args: "[-s status] [--json]", summary: "checklist items and task pages", run: wikiTasks}
-	cmdWikiNew     = &command{name: "new", args: "<title> [--in dir] [--task] [-t tag]... [-m body | --stdin]", summary: "create a page, or a task page", run: wikiNew}
-	cmdWikiEdit    = &command{name: "edit", args: "<page> [-m body | --stdin]", summary: "replace a page's body, or open the page in $EDITOR", run: wikiEdit}
-	cmdWikiMove    = &command{name: "mv", args: "<page> <path> [--dry-run] [--json]", summary: "rename a page, rewriting links to and from it", run: wikiMove,
+	cmdWikiNew     = &command{name: "new", args: "<title> [--in dir] [--template name] [--task] [-t tag]... [-m body | --stdin]", summary: "create a page, or a task page", run: wikiNew,
+		help: `The page is titled with a "# Title" heading. With --template it starts from
+that template instead, takes its extension, .md or .qmd, and sets its title
+and, where the template has a date key, today's date. 'gwiki templates' lists
+the templates.`}
+	cmdWikiTemplates = &command{name: "templates", args: "[--json]", summary: "the templates new pages can start from", run: wikiTemplates,
+		help: `Lists the templates by name, each from the first place that has it:
+.gwiki/templates in the project, then templates beside the per-user
+config.json, then those built in. A template is a page, <name>.md or
+<name>.qmd, so one in the project or per-user directory replaces a built-in
+one of the same name.`}
+	cmdWikiEdit = &command{name: "edit", args: "<page> [-m body | --stdin]", summary: "replace a page's body, or open the page in $EDITOR", run: wikiEdit}
+	cmdWikiMove = &command{name: "mv", args: "<page> <path> [--dry-run] [--json]", summary: "rename a page, rewriting links to and from it", run: wikiMove,
 		help: `Moves a page and rewrites every link to it, and its own relative links, in
 each link's own form. A path ending in / keeps the file name. --dry-run lists
 the changes without making them. The move is refused, and nothing written, if
@@ -131,6 +144,7 @@ func wikiUI(a *App, args []string) error {
 	if len(args) > 0 {
 		return fmt.Errorf("%w: ui takes no arguments", errUsage)
 	}
+	tui.Version = Version
 	return a.withWiki(tui.RunWiki)
 }
 
@@ -554,6 +568,9 @@ func wikiCheck(a *App, args []string) error {
 // in the same page. With first set it applies an only offer and asks nothing.
 func (a *App) fixLinks(w *wiki.Wiki, first bool) error {
 	in := bufio.NewReader(a.Stdin)
+	if stop, err := a.fixNames(w, in, first); stop || err != nil {
+		return err
+	}
 	passed := map[string]bool{}
 	fixed := 0
 	for {
@@ -600,18 +617,12 @@ func (a *App) fixLinks(w *wiki.Wiki, first bool) error {
 			for i, o := range offers {
 				a.printf("  %d  %s  %s\n", i+1, display.Line(o.New), a.style(ansiDim, o.Label))
 			}
-			a.printf("  s  skip    q  stop\nchoice: ")
-			line, err := in.ReadString('\n')
-			answer := strings.TrimSpace(line)
-			if answer == "q" || (err != nil && answer == "") {
-				a.printf("\n")
+			var stop bool
+			if choice, stop = a.choose(in, len(offers)); stop {
 				break
-			}
-			n, convErr := strconv.Atoi(answer)
-			if convErr != nil || n < 1 || n > len(offers) {
+			} else if choice < 0 {
 				continue
 			}
-			choice = n - 1
 		}
 		warn, err := w.Fix(*l, offers[choice])
 		if err != nil {
@@ -625,6 +636,66 @@ func (a *App) fixLinks(w *wiki.Wiki, first bool) error {
 		a.printf("%s\n", display.Plural(fixed, "link")+" fixed")
 	}
 	return nil
+}
+
+// fixNames offers to rename each skipped file whose extension is .md in
+// another case. stop reports a q, which ends the link repairs too.
+func (a *App) fixNames(w *wiki.Wiki, in *bufio.Reader, first bool) (stop bool, err error) {
+	skipped, err := w.Skipped()
+	if err != nil {
+		return false, err
+	}
+	renamed := 0
+	defer func() {
+		if renamed > 0 {
+			a.printf("%s\n", display.Plural(renamed, "file")+" renamed")
+		}
+	}()
+	for _, s := range skipped {
+		to, ok := wiki.Renamed(s.Path)
+		if !ok || s.Reason != wiki.ErrMisnamed.Error() {
+			continue
+		}
+		if !first {
+			where := path.Join(wiki.DirName, wiki.PagesDir, s.Path)
+			a.printf("%s  %s  %s\n", a.style(ansiDim, where), a.style(ansiRed, "skipped"), s.Reason)
+			a.printf("  1  %s  %s\n", display.Line(to), a.style(ansiDim, "rename, rewriting links to it"))
+			choice, stop := a.choose(in, 1)
+			if stop {
+				return true, nil
+			} else if choice < 0 {
+				continue
+			}
+		}
+		links, warn, err := w.FixExtension(s.Path)
+		if err != nil {
+			// One file that cannot be renamed, such as one whose new name
+			// is taken, leaves the rest to repair.
+			fmt.Fprintf(a.Stderr, "%s %s: %v\n", a.style(ansiRed, "not renamed:"), display.Line(s.Path), err)
+			continue
+		}
+		a.warnWritten(warn)
+		renamed++
+		a.printf("%s  %s -> %s, %s rewritten\n", a.style(ansiGreen, "renamed"), display.Line(s.Path), display.Line(to), display.Plural(len(links), "link"))
+	}
+	return false, nil
+}
+
+// choose reads a choice among n offers: its index, -1 to skip, or stop for q
+// and the end of input.
+func (a *App) choose(in *bufio.Reader, n int) (choice int, stop bool) {
+	a.printf("  s  skip    q  stop\nchoice: ")
+	line, err := in.ReadString('\n')
+	answer := strings.TrimSpace(line)
+	if answer == "q" || (err != nil && answer == "") {
+		a.printf("\n")
+		return -1, true
+	}
+	c, err := strconv.Atoi(answer)
+	if err != nil || c < 1 || c > n {
+		return -1, false
+	}
+	return c - 1, false
 }
 
 // linkKey identifies a broken link across re-reads, which can shift columns.
@@ -723,6 +794,7 @@ func wikiCache(a *App, args []string) error {
 func wikiNew(a *App, args []string) error {
 	fs := a.flags("new")
 	dir := fs.String("in", "", "directory under .gwiki/wiki")
+	template := fs.String("template", "", "template to start from; see 'gwiki templates'")
 	task := fs.Bool("task", false, "a task page")
 	body := fs.String("m", "", "body text")
 	stdin := fs.Bool("stdin", false, "read the body from standard input")
@@ -744,12 +816,43 @@ func wikiNew(a *App, args []string) error {
 		text = piped
 	}
 	return a.withWiki(func(w *wiki.Wiki) error {
-		info, warn, err := w.Create(wiki.NewPage{Title: title, Dir: *dir, Task: *task, Tags: tags, Body: text})
+		info, warn, err := w.Create(wiki.NewPage{Title: title, Dir: *dir, Task: *task, Tags: tags, Body: text, Template: *template})
 		if err != nil {
 			return err
 		}
 		a.warnWritten(warn)
 		a.printf("%s  %s\n", a.style(ansiDim, info.File()), a.style(ansiBold, info.Title))
+		return nil
+	})
+}
+
+func wikiTemplates(a *App, args []string) error {
+	fs := a.flags("templates")
+	asJSON := fs.Bool("json", false, "machine-readable output")
+	if err := parse(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("%w: templates takes no arguments", errUsage)
+	}
+	return a.withWiki(func(w *wiki.Wiki) error {
+		all, err := w.Templates()
+		if err != nil {
+			return err
+		}
+		if *asJSON {
+			return a.writeJSON(all)
+		}
+		var t table
+		for _, tp := range all {
+			if tp.Skipped != "" {
+				fmt.Fprintf(a.Stderr, "%s template %s is skipped: %s\n", a.style(ansiYellow, "warning:"), display.Line(tp.File), tp.Skipped)
+				continue
+			}
+			t.addStyled([]string{tp.Name, tp.Ext, tp.Origin, tp.File},
+				[]string{a.style(ansiBold, tp.Name), tp.Ext, a.style(ansiDim, tp.Origin), a.style(ansiDim, display.Line(tp.File))})
+		}
+		t.write(a.Stdout)
 		return nil
 	})
 }

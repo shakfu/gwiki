@@ -1,6 +1,7 @@
 package wiki
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -84,16 +85,22 @@ func (s *Snapshot) WikiTarget(target string) (string, string) { return s.ix.wiki
 func (w *Wiki) PageFile(page string) string { return w.file(page) }
 
 // PageOf returns the page a file holds, and false for a file that is not a
-// page: outside the pages directory, not markdown, or under a hidden
+// page: outside the pages directory, not .md or .qmd, or under a hidden
 // directory.
 func (w *Wiki) PageOf(file string) (string, bool) {
 	rel, err := filepath.Rel(w.PagesPath(), file)
-	if err != nil || !strings.HasSuffix(rel, ".md") {
+	if err != nil || !isPageFile(rel) {
 		return "", false
 	}
 	id, err := CleanPath(rel)
 	if err != nil {
 		return "", false
+	}
+	// a.qmd beside a.md is not the page; a file not yet written may be.
+	if f := w.file(id); filepath.Ext(rel) == ".qmd" && !strings.HasSuffix(f, ".qmd") {
+		if _, err := os.Lstat(f); err == nil {
+			return "", false
+		}
 	}
 	return id, true
 }

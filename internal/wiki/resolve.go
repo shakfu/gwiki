@@ -88,13 +88,13 @@ func (w *Wiki) classify(page string, l markdown.Link, lineCounts map[string]int)
 
 	inPages, err := filepath.Rel(w.PagesPath(), abs)
 	inPages = filepath.ToSlash(inPages)
-	if err == nil && !strings.HasPrefix(inPages, "..") && inPages != "." && !strings.HasSuffix(inPages, ".md") {
+	if err == nil && !strings.HasPrefix(inPages, "..") && inPages != "." && !isPageFile(inPages) {
 		// A directory of pages is its README, whether or not one exists yet.
 		if name, ok := sectionReadme(abs); ok {
 			inPages = path.Join(inPages, name)
 		}
 	}
-	if err == nil && !strings.HasPrefix(inPages, "..") && strings.HasSuffix(inPages, ".md") {
+	if err == nil && !strings.HasPrefix(inPages, "..") && isPageFile(inPages) {
 		c := classified{kind: KindPage, resolved: pageID(inPages)}
 		if l.Anchor != "" {
 			c.kind = KindHeading
@@ -243,7 +243,7 @@ func loadIndex(tx *sql.Tx) (*index, error) {
 // written, lowercased, for a path or title; with spaces as hyphens, for a path;
 // and the last element of that, for a file name.
 func wikiKeys(target string) (asWritten, hyphened, stem string) {
-	t := strings.TrimPrefix(strings.TrimSuffix(strings.ToLower(strings.TrimSpace(target)), ".md"), "/")
+	t := strings.TrimPrefix(trimPageExt(strings.ToLower(strings.TrimSpace(target))), "/")
 	h := strings.ReplaceAll(t, " ", "-")
 	return t, h, path.Base(h)
 }
